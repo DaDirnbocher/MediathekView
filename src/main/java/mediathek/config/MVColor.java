@@ -19,9 +19,10 @@
  */
 package mediathek.config;
 
-import java.awt.Color;
-import java.util.LinkedList;
 import mediathek.tool.MVC;
+
+import java.awt.*;
+import java.util.LinkedList;
 
 public class MVColor {
 
@@ -29,6 +30,7 @@ public class MVColor {
     public static final MVC FILM_LIVESTREAM = new MVC(MVConfig.Configs.FARBE__FILM_LIVESTREAM, new Color(130, 0, 0), "Filme, Livestreams");
     public static final MVC FILM_HISTORY = new MVC(MVConfig.Configs.FARBE__FILM_HISTORY, new Color(225, 225, 225), "Filme, gesehen");
     public static final MVC FILM_NEU = new MVC(MVConfig.Configs.FARBE__FILM_NEU, new Color(0, 0, 240), "Filme, neue");
+    public static final MVC FILM_BOOKMARKED = new MVC(MVConfig.Configs.FARBE__FILM_BOOKMARKED, new Color(204, 238, 255), "Filme, gemerkt");
     public static final MVC FILM_GEOBLOCK_BACKGROUND = new MVC(MVConfig.Configs.FARBE__FILM_GEOBLOCK_BACKGROUND, new Color(255, 254, 230), "Film, geogeblockt");
     public static final MVC FILM_GEOBLOCK_BACKGROUND_SEL = new MVC(MVConfig.Configs.FARBE__FILM_GEOBLOCK_BACKGROUND_SEL, new Color(255, 251, 179), "Film, geogeblockt, selektiert");
 
@@ -56,7 +58,6 @@ public class MVColor {
 
     // ProgrammGui
     public static final MVC BUTTON_SET_ABSPIELEN = new MVC(MVConfig.Configs.FARBE__BUTTON_SET_ABSPIELEN, new Color(205, 255, 191), "Einstellungen Sets, Button Abspielen");
-    public static final MVC FILMLISTE_LADEN_AKTIV = new MVC(MVConfig.Configs.FARBE__FILMLISTE_LADEN_AKTIV, new Color(205, 255, 191), "Einstellungen Filmliste, Auto-Manuell");
 
     // DialogDownload
     public static final MVC DOWNLOAD_DATEINAME_EXISTIERT = new MVC(MVConfig.Configs.FARBE__DOWNLOAD_DATEINAME_EXISTIERT, new Color(190, 0, 0), "Download, Dateiname existiert schon");
@@ -72,6 +73,7 @@ public class MVColor {
         liste.add(FILM_LIVESTREAM);
         liste.add(FILM_HISTORY);
         liste.add(FILM_NEU);
+        liste.add(FILM_BOOKMARKED);
         liste.add(FILM_GEOBLOCK_BACKGROUND);
         liste.add(FILM_GEOBLOCK_BACKGROUND_SEL);
         liste.add(DOWNLOAD_IST_ABO);
@@ -90,7 +92,6 @@ public class MVColor {
         liste.add(FILTER_REGEX);
         liste.add(FILTER_REGEX_FEHLER);
         liste.add(BUTTON_SET_ABSPIELEN);
-        liste.add(FILMLISTE_LADEN_AKTIV);
         liste.add(DOWNLOAD_DATEINAME_EXISTIERT);
         liste.add(DOWNLOAD_DATEINAME_NEU);
         liste.add(DOWNLOAD_DATEINAME_ALT);

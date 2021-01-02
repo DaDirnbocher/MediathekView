@@ -3,8 +3,8 @@ package mediathek.daten;
 
 import mediathek.config.Konstanten;
 import mediathek.file.GetFile;
-import mediathek.tool.GuiFunktionen;
 import mediathek.tool.MVHttpClient;
+import mediathek.tool.NetUtils;
 import mediathek.tool.models.TModel;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -97,18 +97,12 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
         if (listePset == null) {
             // dann nehmen wir halt die im jar-File
             // liefert das Standard Programmset für das entsprechende BS
-            InputStreamReader inReader;
-            switch (getOs()) {
-                case LINUX:
-                    inReader = new GetFile().getPsetVorlageLinux();
-                    break;
-                case MAC:
-                    inReader = new GetFile().getPsetVorlageMac();
-                    break;
+            InputStreamReader inReader = switch (getOs()) {
+                case LINUX -> new GetFile().getPsetVorlageLinux();
+                case MAC -> new GetFile().getPsetVorlageMac();
+                default -> new GetFile().getPsetVorlageWindows();
+            };
 
-                default:
-                    inReader = new GetFile().getPsetVorlageWindows();
-            }
             // Standardgruppen laden
             listePset = ListePsetVorlagen.importPset(inReader, true);
         }
@@ -128,7 +122,9 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
             XMLInputFactory inFactory = XMLInputFactory.newInstance();
             inFactory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.FALSE);
 
-            Request request = new Request.Builder().url(Konstanten.ADRESSE_VORLAGE_PROGRAMMGRUPPEN).get().build();
+            var url = Konstanten.URL_MEDIATHEKVIEW_RESOURCES.resolve(Konstanten.PSET_PROGRAM_GROUP_LIST_PATH);
+            assert url != null;
+            Request request = new Request.Builder().url(url).get().build();
             try (Response response = MVHttpClient.getInstance().getReducedTimeOutClient().newCall(request).execute();
                  ResponseBody body = response.body()) {
                 if (response.isSuccessful() && body != null) {
@@ -169,7 +165,7 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
         try {
             ListePset result = null;
 
-            if (GuiFunktionen.istUrl(dateiUrl)) {
+            if (NetUtils.isUrl(dateiUrl)) {
                 Request request = new Request.Builder().url(dateiUrl).get().build();
                 try (Response response = MVHttpClient.getInstance().getReducedTimeOutClient().newCall(request).execute();
                      ResponseBody body = response.body()) {

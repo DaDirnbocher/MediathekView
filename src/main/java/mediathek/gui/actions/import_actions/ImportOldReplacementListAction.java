@@ -4,7 +4,6 @@ import javafx.application.Platform;
 import javafx.scene.control.Alert;
 import javafx.stage.FileChooser;
 import mediathek.config.Konstanten;
-import mediathek.controller.IoXmlLesen;
 import mediathek.tool.javafx.FXErrorDialog;
 
 import javax.swing.*;
@@ -24,17 +23,17 @@ public class ImportOldReplacementListAction extends AbstractAction {
             var selectedFile = fileChooser.showOpenDialog(null);
             if (selectedFile != null) {
                 try {
-                    final IoXmlLesen configReader = new IoXmlLesen();
+                    var configReader = new OldConfigFileImporter();
                     var result = configReader.importAboBlacklist(selectedFile.getAbsolutePath(), false, false, true);
                     var alert = new ImportSettingsAlert(Alert.AlertType.INFORMATION);
                     String text = "Es wurden " + result.right + " Einträge importiert.";
                     alert.setContentText(text);
                     alert.showAndWait();
                 } catch (Exception ex) {
-                    FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME,
+                    Platform.runLater(() -> FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME,
                             "Fehler beim Importieren der Ersetzungstabelle",
                             "Es trat ein Fehler beim Import der Ersetzungstabelle auf.\nSollte dies häufiger auftreten kontaktieren Sie bitte das Entwicklerteam.",
-                            ex);
+                            ex));
                 }
             } else {
                 var alert = new ImportSettingsAlert(Alert.AlertType.WARNING);

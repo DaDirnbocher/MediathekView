@@ -1,8 +1,9 @@
 package mediathek.tool.table;
 
 import mediathek.config.MVConfig;
-import mediathek.tool.Log;
 import mediathek.tool.models.TModel;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.swing.*;
 import javax.swing.RowSorter.SortKey;
@@ -17,25 +18,26 @@ public abstract class MVTable extends JTable {
     private static final String FELDTRENNER = "|";
     private static final String SORT_ASCENDING = "ASCENDING";
     private static final String SORT_DESCENDING = "DESCENDING";
+    private static final Logger logger = LogManager.getLogger();
     protected final int[] breite;
     protected final int[] reihe;
+    public boolean useSmallSenderIcons;
+    protected int maxSpalten;
+    protected int indexSpalte;
+    protected int[] selRows;
+    protected int[] selIndexes;
+    protected int selRow = -1;
+    protected boolean[] spaltenAnzeigen;
+    protected MVConfig.Configs nrDatenSystem;
+    protected MVConfig.Configs iconAnzeigenStr;
+    protected MVConfig.Configs iconKleinStr;
+    protected List<? extends RowSorter.SortKey> listeSortKeys;
     /**
      * This is the UI provided default font used for calculating the size area
      */
-    private final Font defaultFont = UIManager.getDefaults().getFont("Table.font");
-    public boolean useSmallSenderIcons = false;
-    protected int maxSpalten;
-    protected int indexSpalte = 0;
-    protected int[] selRows;
-    protected int[] selIndexes = null;
-    protected int selRow = -1;
-    protected boolean[] spaltenAnzeigen;
-    protected MVConfig.Configs nrDatenSystem = null;
-    protected MVConfig.Configs iconAnzeigenStr = null;
-    protected MVConfig.Configs iconKleinStr = null;
-    private boolean showSenderIcon = false;
+    private Font defaultFont = UIManager.getDefaults().getFont("Table.font");
+    private boolean showSenderIcon;
     private boolean lineBreak = true;
-    private List<? extends RowSorter.SortKey> listeSortKeys = null;
 
     public MVTable() {
         setAutoCreateRowSorter(true);
@@ -59,19 +61,42 @@ public abstract class MVTable extends JTable {
             useSmallSenderIcons = Boolean.parseBoolean(MVConfig.get(iconKleinStr));
         }
 
+        loadDefaultFontSize();
         setHeight();
     }
 
-    private static SortKey sortKeyLesen(String s, String upDown) {
+    /**
+     * Load font size from settings and replace default font.
+     */
+    protected void loadDefaultFontSize() {
+        //unused here
+    }
+
+    /**
+     * Store default font size in settings
+     */
+    protected void saveDefaultFontSize() {
+        //unused here
+    }
+
+    public Font getDefaultFont() { return defaultFont;}
+
+    public void setDefaultFont(Font newFont) {
+        defaultFont = newFont;
+        saveDefaultFontSize();
+    }
+
+    private SortKey sortKeyLesen(String s, String strSortOrder) {
         SortKey sk;
 
         try {
-            final int sp = Integer.parseInt(s);
-            if (upDown.equals(SORT_DESCENDING)) {
-                sk = new SortKey(sp, SortOrder.DESCENDING);
-            } else {
-                sk = new SortKey(sp, SortOrder.ASCENDING);
-            }
+            final int column = Integer.parseInt(s);
+            SortOrder order = switch (strSortOrder) {
+                case SORT_ASCENDING -> SortOrder.ASCENDING;
+                case SORT_DESCENDING -> SortOrder.DESCENDING;
+                default -> throw new IndexOutOfBoundsException("UNDEFINED SORT KEY");
+            };
+            sk = new SortKey(column,order);
         } catch (Exception ex) {
             return null;
         }
@@ -108,37 +133,47 @@ public abstract class MVTable extends JTable {
         mdl.setValueIsAdjusting(false);
     }
 
-    protected int getSizeArea() {
-        int sizeArea = 0;
+    /**
+     * Return a fictious size of a multi-line text area.
+     * @return The fictious size of a multi-line label.
+     */
+    private int getSizeArea() {
+        final int sizeArea;
+        var fm = getFontMetrics(getDefaultFont());
+        final var height = fm.getHeight();
 
-        if (lineBreak)
-            sizeArea = defaultFont.getSize() * 4;
+        if (lineBreak) {
+            sizeArea = 4 * height;
+        }
+        else {
+            sizeArea = height;
+        }
 
         return sizeArea;
     }
 
+    /**
+     * Calculate the row height in a table based on icon display,etc.
+     */
     public void setHeight() {
         final int sizeArea = getSizeArea();
-        final int defaultFontSize = defaultFont.getSize();
-        final int internalDefaultSize = defaultFontSize + defaultFontSize / 3;
-
+        var fm = getFontMetrics(getDefaultFont());
         int size;
-        if (!showSenderIcon) {
-            if (defaultFontSize < 15) {
-                size = 18;
-            } else {
-                size = internalDefaultSize;
+
+        size = fm.getHeight() + 5; // add some extra spacing for the height
+
+        // check some minimum height requirements
+        if (showSenderIcon) {
+            if (useSmallSenderIcons) {
+                // small icons
+                if (size < 18)
+                    size = 20;
             }
-        } else if (useSmallSenderIcons) {
-            if (defaultFontSize < 18) {
-                size = 20;
-            } else {
-                size = internalDefaultSize;
+            else {
+                //large icons
+                if (size < 30)
+                    size = 36;
             }
-        } else if (defaultFontSize < 30) {
-            size = 36;
-        } else {
-            size = internalDefaultSize;
         }
 
         setRowHeight(Math.max(size, sizeArea));
@@ -178,6 +213,7 @@ public abstract class MVTable extends JTable {
                 if (!arrLesen(r, reihe)) {
                     ok = false;
                 }
+
                 SortKey sk = sortKeyLesen(s, upDown);
                 if (sk != null) {
                     final ArrayList<SortKey> listSortKeys_ = new ArrayList<>();
@@ -192,8 +228,7 @@ public abstract class MVTable extends JTable {
             } else {
                 resetTabelle();
             }
-        } catch (Exception ex) {
-            //vorsichtshalber
+        } catch (Exception ignored) {
         }
     }
 
@@ -201,7 +236,7 @@ public abstract class MVTable extends JTable {
         return spaltenAnzeigen[i];
     }
 
-    private void setSpaltenEinAus(int[] nr, boolean[] spaltenAnzeigen) {
+    protected void setSpaltenEinAus(int[] nr, boolean[] spaltenAnzeigen) {
         for (int i = 0; i < spaltenAnzeigen.length; ++i) {
             spaltenAnzeigen[i] = nr[i] > 0;
         }
@@ -241,10 +276,9 @@ public abstract class MVTable extends JTable {
     }
 
     private void scrollToSelection(int rowIndex) {
-        if (!(getParent() instanceof JViewport)) {
+        if (!(getParent() instanceof JViewport viewport)) {
             return;
         }
-        JViewport viewport = (JViewport) getParent();
         Rectangle rect = getCellRect(rowIndex, 0, true);
         Rectangle viewRect = viewport.getViewRect();
         rect.setLocation(rect.x - viewRect.x, rect.y - viewRect.y);
@@ -281,7 +315,7 @@ public abstract class MVTable extends JTable {
         }
     }
 
-    private void changeColumnWidth2() {
+    protected void changeColumnWidth2() {
         final TableColumnModel model = getColumnModel();
         for (int i = 0; i < breite.length && i < getColumnCount(); ++i) {
             final int colIndex = convertColumnIndexToView(i);
@@ -297,7 +331,7 @@ public abstract class MVTable extends JTable {
         }
     }
 
-    private void changeColumnWidth() {
+    protected void changeColumnWidth() {
         for (int i = 0; i < breite.length && i < getColumnCount(); ++i) {
             if (!anzeigen(i, spaltenAnzeigen)) {
                 // geänderte Ansicht der Spalten abfragen
@@ -335,7 +369,7 @@ public abstract class MVTable extends JTable {
     }
 
     public void setSpalten() {
-        // gemerkte Einstellungen der Tabelle wieder setzten
+        // gemerkte Einstellungen der Tabelle wieder setzen
         try {
             changeColumnWidth();
 
@@ -356,7 +390,7 @@ public abstract class MVTable extends JTable {
 
             validate();
         } catch (Exception ex) {
-            Log.errorLog(965001463, ex);
+            logger.error("setSpalten", ex);
         }
     }
 
@@ -366,7 +400,7 @@ public abstract class MVTable extends JTable {
     public void resetTabelle() {
         listeSortKeys = null;
 
-        getRowSorter().setSortKeys(null);
+        getRowSorter().setSortKeys(null); // empty sort keys
         setRowSorter(null);
         setAutoCreateRowSorter(true);
         spaltenAusschalten();

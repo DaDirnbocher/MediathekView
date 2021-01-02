@@ -7,15 +7,12 @@ import javax.swing.*;
 import java.awt.*;
 
 public class AboHistoryDialog extends StandardCloseDialog {
-    private final Daten daten;
-
     public AboHistoryDialog(Frame owner, Daten daten) {
-        super(owner, "Erledigte Abos", true);
-        this.daten = daten;
+        super(owner, "Abo-Historie", true);
     }
 
     @Override
     public JComponent createContentPanel() {
-        return new AboHistoryPanel(daten);
+        return new AboHistoryPanel();
     }
 }

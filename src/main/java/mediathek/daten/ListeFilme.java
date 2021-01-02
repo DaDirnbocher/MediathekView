@@ -7,23 +7,17 @@ import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import mediathek.config.Konstanten;
 import mediathek.tool.GermanStringSorter;
-import org.apache.commons.lang3.time.FastDateFormat;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.NotNull;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @SuppressWarnings("serial")
 public class ListeFilme extends ArrayList<DatenFilm> {
     public static final String FILMLISTE = "Filmliste";
-    private final static String DATUM_ZEIT_FORMAT = "dd.MM.yyyy, HH:mm";
-    private static final FastDateFormat sdf_ = FastDateFormat.getInstance(DATUM_ZEIT_FORMAT,new SimpleTimeZone(SimpleTimeZone.UTC_TIME, "UTC"));
-    private static final FastDateFormat formatter = FastDateFormat.getInstance(DATUM_ZEIT_FORMAT);
-    private static final Logger logger = LogManager.getLogger(ListeFilme.class);
     private final FilmListMetaData metaData = new FilmListMetaData();
     /**
      * List of available senders which notifies its users.
@@ -33,7 +27,7 @@ public class ListeFilme extends ArrayList<DatenFilm> {
      * javafx proxy class to the sender list.
      */
     private final ObservableList<String> obs_senderList = new EventObservableList<>(m_senderList);
-    public boolean neueFilme = false;
+    public boolean neueFilme;
 
     /**
      * Get the basic sender channel list, useful e.g. for swing models
@@ -75,17 +69,17 @@ public class ListeFilme extends ArrayList<DatenFilm> {
                 .collect(Collectors.toList());
     }
 
-    public synchronized void updateFromFilmList(ListeFilme listeEinsortieren) {
-        // in eine vorhandene Liste soll eine andere Filmliste einsortiert werden
+    public synchronized void updateFromFilmList(@NotNull ListeFilme newFilmsList) {
+        // In die vorhandene Liste soll eine andere Filmliste einsortiert werden
         // es werden nur Filme die noch nicht vorhanden sind, einsortiert
-        final HashSet<String> hash = new HashSet<>(listeEinsortieren.size() + 1, 1);
+        final HashSet<String> hashNewFilms = new HashSet<>(newFilmsList.size() + 1, 1);
 
-        //TODO check if f.getUrl might be better solution
-        listeEinsortieren.forEach((DatenFilm f) -> hash.add(f.getIndex())); //alternativ f.getUrl()
-        this.removeIf(f -> hash.contains(f.getIndex())); //alternativ f.getUrl()
+        newFilmsList.forEach(newFilm -> hashNewFilms.add(newFilm.getUniqueHash()));
+        this.removeIf(currentFilm -> hashNewFilms.contains(currentFilm.getUniqueHash()));
 
-        listeEinsortieren.forEach(this::addInit);
-        hash.clear();
+        hashNewFilms.clear();
+
+        newFilmsList.forEach(this::addInit);
     }
 
     private void addInit(DatenFilm film) {
@@ -94,15 +88,9 @@ public class ListeFilme extends ArrayList<DatenFilm> {
     }
 
     @Override
-    public boolean add(DatenFilm aFilm) {
-        return super.add(aFilm);
-    }
-
-    @Override
     public synchronized void clear() {
-        neueFilme = false;
-
         super.clear();
+        neueFilme = false;
     }
 
     public synchronized void setMetaData(FilmListMetaData meta) {
@@ -113,6 +101,16 @@ public class ListeFilme extends ArrayList<DatenFilm> {
     public synchronized DatenFilm getFilmByUrl(final String url) {
         return parallelStream().filter(f -> f.getUrl().equalsIgnoreCase(url)).findAny().orElse(null);
     }
+    
+    /**
+     * Find movie with given url and sendername
+     * @param url    String wiht URL
+     * @param sender String with sender name
+     * @return DatenFilm object if found or null
+     */
+    public synchronized DatenFilm getFilmByUrlAndSender(final String url, final String sender) {
+      return parallelStream().filter(f -> f.getUrl().equalsIgnoreCase(url) && f.getSender().equalsIgnoreCase(sender)).findAny().orElse(null);
+    }
 
     public synchronized DatenFilm getFilmByUrl_klein_hoch_hd(String url) {
         // Problem wegen gleicher URLs
@@ -122,10 +120,10 @@ public class ListeFilme extends ArrayList<DatenFilm> {
             if (f.getUrl().equals(url)) {
                 ret = f;
                 break;
-            } else if (f.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_HD).equals(url)) {
+            } else if (f.getUrlFuerAufloesung(FilmResolution.Enum.HIGH_QUALITY).equals(url)) {
                 ret = f;
                 break;
-            } else if (f.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_KLEIN).equals(url)) {
+            } else if (f.getUrlFuerAufloesung(FilmResolution.Enum.LOW).equals(url)) {
                 ret = f;
                 break;
             }
@@ -134,104 +132,12 @@ public class ListeFilme extends ArrayList<DatenFilm> {
         return ret;
     }
 
-    public synchronized String genDate() {
-        // Tag, Zeit in lokaler Zeit wann die Filmliste erstellt wurde
-        // in der Form "dd.MM.yyyy, HH:mm"
-        final String date = metaData.getDatum();
-
-        String ret;
-        try {
-            final Date filmDate = sdf_.parse(date);
-            ret = formatter.format(filmDate);
-        } catch (ParseException ignored) {
-            ret = date;
-        }
-
-        return ret;
-    }
-
-    public synchronized String getId() {
-        // liefert die ID einer Filmliste
-        return metaData.getId();
-    }
-
     /**
-     * Get the age of the film list.
-     *
-     * @return Age in seconds.
+     * List needs update when it is either empty or too old.
+     * @return true if we need an update.
      */
-    public long getAge() {
-        long ret = 0;
-
-        Date filmDate = getAgeAsDate();
-        if (filmDate != null) {
-            ret = (System.currentTimeMillis() - filmDate.getTime()) / 1000;
-            if (ret < 0) {
-                ret = 0;
-            }
-        }
-        return ret;
-    }
-
-    /**
-     * Get the age of the film list.
-     *
-     * @return Age as a {@link java.util.Date} object.
-     */
-    private Date getAgeAsDate() {
-        String date = metaData.getDatum();
-
-        Date filmDate = null;
-        try {
-            filmDate = sdf_.parse(date);
-        } catch (ParseException ignored) {
-        }
-
-        return filmDate;
-    }
-
-    /**
-     * Check if available Filmlist is older than a specified value.
-     *
-     * @return true if too old or if the list is empty.
-     */
-    public synchronized boolean isTooOld() {
-        return (isEmpty()) || (isOlderThan(Konstanten.ALTER_FILMLISTE_SEKUNDEN_FUER_AUTOUPDATE));
-    }
-
-    /**
-     * Check if Filmlist is too old for using a diff list.
-     *
-     * @return true if empty or too old.
-     */
-    public synchronized boolean isTooOldForDiff() {
-        if (isEmpty()) {
-            return true;
-        }
-        try {
-            final String dateMaxDiff_str = new SimpleDateFormat("yyyy.MM.dd__").format(new Date()) + Konstanten.TIME_MAX_AGE_FOR_DIFF + ":00:00";
-            final Date dateMaxDiff = new SimpleDateFormat("yyyy.MM.dd__HH:mm:ss").parse(dateMaxDiff_str);
-            final Date dateFilmliste = getAgeAsDate();
-            if (dateFilmliste != null) {
-                return dateFilmliste.getTime() < dateMaxDiff.getTime();
-            }
-        } catch (Exception ignored) {
-        }
-        return true;
-    }
-
-    /**
-     * Check if list is older than specified parameter.
-     *
-     * @param sekunden The age in seconds.
-     * @return true if older.
-     */
-    public boolean isOlderThan(long sekunden) {
-        final long ret = getAge();
-        if (ret != 0) {
-            logger.info("Die Filmliste ist {} Minuten alt", ret / 60);
-        }
-        return ret > sekunden;
+    public boolean needsUpdate() {
+        return (isEmpty()) || (metaData().isOlderThan(Konstanten.ALTER_FILMLISTE_SEKUNDEN_FUER_AUTOUPDATE));
     }
 
     public synchronized long countNewFilms() {

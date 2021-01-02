@@ -5,10 +5,11 @@ import jiconfont.swing.IconFontSwing;
 import mediathek.config.MVColor;
 import mediathek.controller.starter.Start;
 import mediathek.daten.DatenDownload;
-import mediathek.tool.Log;
 import mediathek.tool.MVSenderIconCache;
 import mediathek.tool.table.MVTable;
 import org.apache.commons.lang3.SystemUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import javax.swing.*;
 import javax.swing.border.Border;
@@ -22,6 +23,7 @@ public class CellRendererDownloads extends CellRendererBaseWithStart {
     private final static String DOWNLOAD_STOPPEN = "Download stoppen";
     private final static String DOWNLOAD_ENTFERNEN = "Download entfernen";
     private final static String PLAY_DOWNLOADED_FILM = "gespeicherten Film abspielen";
+    private static final Logger logger = LogManager.getLogger(CellRendererDownloads.class);
     private final Icon film_start_tab;
     private final Icon film_start_sw_tab;
     private final Border emptyBorder = BorderFactory.createEmptyBorder();
@@ -82,12 +84,7 @@ public class CellRendererDownloads extends CellRendererBaseWithStart {
     public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus,
                                                    int row, int column) {
         try {
-            setBackground(null);
-            setForeground(null);
-            setIcon(null);
-            setToolTipText(null);
-            setHorizontalAlignment(SwingConstants.LEADING);
-
+            resetComponent();
             super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
             final int rowModelIndex = table.convertRowIndexToModel(row);
@@ -97,17 +94,7 @@ public class CellRendererDownloads extends CellRendererBaseWithStart {
             if (((MVTable) table).isLineBreak()) {
                 JTextArea textArea;
                 switch (columnModelIndex) {
-                    case DatenDownload.DOWNLOAD_TITEL:
-                    case DatenDownload.DOWNLOAD_THEMA:
-                    case DatenDownload.DOWNLOAD_URL:
-                    case DatenDownload.DOWNLOAD_PROGRAMM_AUFRUF:
-                    case DatenDownload.DOWNLOAD_PROGRAMM_AUFRUF_ARRAY:
-                    case DatenDownload.DOWNLOAD_FILM_URL:
-                    case DatenDownload.DOWNLOAD_URL_SUBTITLE:
-                    case DatenDownload.DOWNLOAD_ZIEL_DATEINAME:
-                    case DatenDownload.DOWNLOAD_ZIEL_PFAD:
-                    case DatenDownload.DOWNLOAD_ZIEL_PFAD_DATEINAME:
-                    case DatenDownload.DOWNLOAD_ABO:
+                    case DatenDownload.DOWNLOAD_TITEL, DatenDownload.DOWNLOAD_THEMA, DatenDownload.DOWNLOAD_URL, DatenDownload.DOWNLOAD_PROGRAMM_AUFRUF, DatenDownload.DOWNLOAD_PROGRAMM_AUFRUF_ARRAY, DatenDownload.DOWNLOAD_FILM_URL, DatenDownload.DOWNLOAD_URL_SUBTITLE, DatenDownload.DOWNLOAD_ZIEL_DATEINAME, DatenDownload.DOWNLOAD_ZIEL_PFAD, DatenDownload.DOWNLOAD_ZIEL_PFAD_DATEINAME, DatenDownload.DOWNLOAD_ABO -> {
                         textArea = new JTextArea();
                         textArea.setLineWrap(true);
                         textArea.setWrapStyleWord(true);
@@ -119,12 +106,10 @@ public class CellRendererDownloads extends CellRendererBaseWithStart {
                         }
                         setBackgroundColor(textArea, datenDownload.start, isSelected);
                         handleGeoBlocking(textArea, datenDownload, isSelected);
-                        setSelectionFont(textArea, isSelected);
                         return textArea;
+                    }
                 }
             }
-
-            setSelectionFont(this, isSelected);
 
             switch (columnModelIndex) {
                 case DatenDownload.DOWNLOAD_PROGRESS:
@@ -170,28 +155,16 @@ public class CellRendererDownloads extends CellRendererBaseWithStart {
 
                 case DatenDownload.DOWNLOAD_ART:
                     switch (datenDownload.art) {
-                        case DatenDownload.ART_DOWNLOAD:
-                            setText(DatenDownload.ART_DOWNLOAD_TXT);
-                            break;
-                        case DatenDownload.ART_PROGRAMM:
-                            setText(DatenDownload.ART_PROGRAMM_TXT);
-                            break;
+                        case DatenDownload.ART_DOWNLOAD -> setText(DatenDownload.ART_DOWNLOAD_TXT);
+                        case DatenDownload.ART_PROGRAMM -> setText(DatenDownload.ART_PROGRAMM_TXT);
                     }
                     break;
                 case DatenDownload.DOWNLOAD_QUELLE:
                     switch (datenDownload.quelle) {
-                        case DatenDownload.QUELLE_ALLE:
-                            setText(DatenDownload.QUELLE_ALLE_TXT);
-                            break;
-                        case DatenDownload.QUELLE_ABO:
-                            setText(DatenDownload.QUELLE_ABO_TXT);
-                            break;
-                        case DatenDownload.QUELLE_BUTTON:
-                            setText(DatenDownload.QUELLE_BUTTON_TXT);
-                            break;
-                        case DatenDownload.QUELLE_DOWNLOAD:
-                            setText(DatenDownload.QUELLE_DOWNLOAD_TXT);
-                            break;
+                        case DatenDownload.QUELLE_ALLE -> setText(DatenDownload.QUELLE_ALLE_TXT);
+                        case DatenDownload.QUELLE_ABO -> setText(DatenDownload.QUELLE_ABO_TXT);
+                        case DatenDownload.QUELLE_BUTTON -> setText(DatenDownload.QUELLE_BUTTON_TXT);
+                        case DatenDownload.QUELLE_DOWNLOAD -> setText(DatenDownload.QUELLE_DOWNLOAD_TXT);
                     }
                     break;
 
@@ -229,55 +202,40 @@ public class CellRendererDownloads extends CellRendererBaseWithStart {
             setBackgroundColor(this, datenDownload.start, isSelected);
             handleGeoBlocking(this, datenDownload, isSelected);
         } catch (Exception ex) {
-            Log.errorLog(758200166, ex);
+            logger.error(ex);
         }
         return this;
+    }
+
+    private void setIconsAndToolTips(DatenDownload datenDownload, Icon filmIcon,
+                                     Icon downloadStartIcon, Icon downloadStopIcon) {
+        if (datenDownload.start != null && !datenDownload.isDownloadManager()) {
+            switch (datenDownload.start.status) {
+                case Start.STATUS_FERTIG -> {
+                    setIcon(filmIcon);
+                    setToolTipText(PLAY_DOWNLOADED_FILM);
+                }
+                case Start.STATUS_ERR -> {
+                    setIcon(downloadStartIcon);
+                    setToolTipText(DOWNLOAD_STARTEN);
+                }
+                default -> {
+                    setIcon(downloadStopIcon);
+                    setToolTipText(DOWNLOAD_STOPPEN);
+                }
+            }
+        } else {
+            setIcon(downloadStartIcon);
+            setToolTipText(DOWNLOAD_STARTEN);
+        }
     }
 
     private void handleButtonStartColumn(final DatenDownload datenDownload, final boolean isSelected) {
         setHorizontalAlignment(SwingConstants.CENTER);
         if (isSelected) {
-            if (datenDownload.start != null && !datenDownload.isDownloadManager()) {
-                switch (datenDownload.start.status) {
-                    case Start.STATUS_FERTIG:
-                        setIcon(film_start_tab);
-                        setToolTipText(PLAY_DOWNLOADED_FILM);
-                        break;
-
-                    case Start.STATUS_ERR:
-                        setIcon(download_start_tab);
-                        setToolTipText(DOWNLOAD_STARTEN);
-                        break;
-
-                    default:
-                        setIcon(download_stop_tab);
-                        setToolTipText(DOWNLOAD_STOPPEN);
-                        break;
-                }
-            } else {
-                setIcon(download_start_tab);
-                setToolTipText(DOWNLOAD_STARTEN);
-            }
-        } else if (datenDownload.start != null && !datenDownload.isDownloadManager()) {
-            switch (datenDownload.start.status) {
-                case Start.STATUS_FERTIG:
-                    setIcon(film_start_sw_tab);
-                    setToolTipText(PLAY_DOWNLOADED_FILM);
-                    break;
-
-                case Start.STATUS_ERR:
-                    setIcon(download_start_sw_tab);
-                    setToolTipText(DOWNLOAD_STARTEN);
-                    break;
-
-                default:
-                    setIcon(download_stop_sw_tab);
-                    setToolTipText(DOWNLOAD_STOPPEN);
-                    break;
-            }
+            setIconsAndToolTips(datenDownload, film_start_tab, download_start_tab, download_stop_tab);
         } else {
-            setIcon(download_start_sw_tab);
-            setToolTipText(DOWNLOAD_STARTEN);
+            setIconsAndToolTips(datenDownload, film_start_sw_tab, download_start_sw_tab, download_stop_sw_tab);
         }
     }
 

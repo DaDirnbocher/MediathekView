@@ -1,34 +1,34 @@
 package mediathek.mac;
 
-import javafx.application.Platform;
-import javafx.scene.Scene;
-import javafx.scene.layout.StackPane;
-import javafx.stage.Stage;
-import javafx.stage.StageStyle;
+import mediathek.config.Daten;
+import mediathek.config.Konstanten;
 import mediathek.gui.messages.DownloadFinishedEvent;
 import mediathek.gui.messages.DownloadStartEvent;
 import mediathek.gui.messages.InstallTabSwitchListenerEvent;
-import mediathek.javafx.tool.JavaFxUtils;
+import mediathek.mac.tabs.TabDownloadsMac;
+import mediathek.mac.tabs.TabFilmeMac;
+import mediathek.mac.touchbar.TouchBarUtils;
 import mediathek.mainwindow.MediathekGui;
-import mediathek.tool.Log;
+import mediathek.tool.ApplicationConfiguration;
+import mediathek.tool.notification.GenericNotificationCenter;
+import mediathek.tool.notification.MacNotificationCenter;
+import mediathek.tool.notification.NullNotificationCenter;
 import mediathek.tool.threads.IndicatorThread;
 import net.engio.mbassy.listener.Handler;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.NotNull;
 
 import javax.imageio.ImageIO;
+import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 
-@SuppressWarnings("serial")
 public class MediathekGuiMac extends MediathekGui {
-    private static final String SHUTDOWN_HELPER_APP_BINARY_PATH = "/Contents/MacOS/MediathekView Shutdown Helper";
+    protected static Logger logger = LogManager.getLogger(MediathekGuiMac.class);
     private final OsxPowerManager powerManager = new OsxPowerManager();
-    private final Logger logger = LogManager.getLogger(MediathekGuiMac.class);
-    protected Stage controlsFxWorkaroundStage;
 
     public MediathekGuiMac() {
         super();
@@ -37,60 +37,98 @@ public class MediathekGuiMac extends MediathekGui {
     }
 
     @Override
+    public void setVisible(boolean visible) {
+        super.setVisible(visible);
+
+        if (TouchBarUtils.isTouchBarSupported()) {
+            var comp = tabbedPane.getSelectedComponent();
+            if (comp.equals(tabFilme)) {
+                // bugfix for macOS 11.1 Big Sur which otherwise wouldn´t show the touchbar on startup...
+                // window must be visible to activate touchbar
+                tabFilme.showTouchBar();
+            }
+        }
+    }
+
+    @Override
+    protected boolean officialLauncherInUse() {
+        boolean macOSBinaryInuse = true;
+        final var osxOfficialApp = System.getProperty(Konstanten.MACOS_OFFICIAL_APP);
+        if (osxOfficialApp == null || osxOfficialApp.isEmpty() || osxOfficialApp.equalsIgnoreCase("false")) {
+            macOSBinaryInuse = false;
+        }
+        return macOSBinaryInuse;
+    }
+
+    @Override
+    protected void installAdditionalHelpEntries() {
+        //unused on macOS
+    }
+
+    @Override
     public void initializeSystemTray() {
         //we don´t use it on macOS
     }
 
     @Override
-    protected void closeControlsFxWorkaroundStage() {
-        Platform.runLater(() -> {
-            if (controlsFxWorkaroundStage != null)
-                controlsFxWorkaroundStage.close();
-        });
+    protected void installTouchBarSupport() {
+        logger.trace("install touch bar support");
+        if (TouchBarUtils.isTouchBarSupported()) {
+            tabbedPane.addChangeListener(e -> {
+                var comp = tabbedPane.getSelectedComponent();
+                if (comp.equals(tabFilme)) {
+                    tabDownloads.hideTouchBar();
+                    tabFilme.showTouchBar();
+                } else if (comp.equals(tabDownloads)) {
+                    tabFilme.hideTouchBar();
+                    tabDownloads.showTouchBar();
+                }
+            });
+        }
+
     }
 
-    static class WorkaroundStage extends Stage {
-        public WorkaroundStage() {
-            initStyle(StageStyle.UTILITY);
-            var root = new StackPane();
-            root.setStyle("-fx-background-color: TRANSPARENT");
+    @Override
+    protected void setupNotificationCenter() {
+        try {
+            var notificationCenter = daten.notificationCenter();
+            if (notificationCenter != null) {
+                notificationCenter.close();
+            }
+        } catch (IOException e) {
+            logger.error("error closing notification center", e);
+        }
 
-            var  scene = new Scene(root, 1, 1);
-            scene.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        final boolean showNotifications = config.getBoolean(ApplicationConfiguration.APPLICATION_SHOW_NOTIFICATIONS, true);
+        // we need to figure if we have native support available
+        config.setProperty(ApplicationConfiguration.APPLICATION_NATIVE_NOTIFICATIONS_SUPPORT, false);
 
-            setScene(scene);
-            setWidth(1d);
-            setHeight(1d);
-            setOpacity(0d);
+        if (!showNotifications) {
+            daten.setNotificationCenter(new NullNotificationCenter());
+        } else {
+            if (config.getBoolean(ApplicationConfiguration.APPLICATION_SHOW_NATIVE_NOTIFICATIONS, false))
+                daten.setNotificationCenter(new MacNotificationCenter());
+            else
+                daten.setNotificationCenter(new GenericNotificationCenter());
         }
     }
 
     @Override
-    protected void workaroundControlsFxNotificationBug() {
-        JavaFxUtils.invokeInFxThreadAndWait(() -> {
-            controlsFxWorkaroundStage = new WorkaroundStage();
-            controlsFxWorkaroundStage.show();
-            controlsFxWorkaroundStage.toBack();
-        });
+    protected JPanel createTabFilme(@NotNull Daten daten) {
+        return new TabFilmeMac(daten, this);
+    }
+
+    @Override
+    protected JPanel createTabDownloads(@NotNull Daten daten) {
+        return new TabDownloadsMac(daten, this);
     }
 
     @Override
     protected void shutdownComputer() {
         try {
-            var result = Spotlight.find("kMDItemCFBundleIdentifier == org.mediathekview.MediathekView-Shutdown-Helper");
-            if (result.isEmpty())
-                logger.error("could not locate mediathekview shutdown helper app");
-            else {
-                File appLocation = result.get(0);
-                logger.debug("Shutdown Helper location: {}", appLocation.toString());
-                logger.info("Executing shutdown helper");
-                final ProcessBuilder builder = new ProcessBuilder(appLocation.toString() + SHUTDOWN_HELPER_APP_BINARY_PATH);
-                builder.command().add("-shutdown");
-                builder.start();
-                logger.debug("shutdown helper app was launched");
-            }
-        } catch (Exception e) {
-            logger.error("unexpected error occured", e);
+            Runtime.getRuntime().exec("nohup bin/mv_shutdown_helper");
+        } catch (IOException e) {
+            logger.error(e);
         }
     }
 
@@ -142,10 +180,15 @@ public class MediathekGuiMac extends MediathekGui {
      * @param numDownloads The number of active downloads.
      */
     private void setDownloadsBadge(int numDownloads) {
-        if (numDownloads > 0)
-            Taskbar.getTaskbar().setIconBadge(Integer.toString(numDownloads));
-        else {
-            Taskbar.getTaskbar().setIconBadge("");
+        if (Taskbar.isTaskbarSupported()) {
+            var taskbar = Taskbar.getTaskbar();
+            if (taskbar.isSupported(Taskbar.Feature.ICON_BADGE_NUMBER)) {
+                if (numDownloads > 0)
+                    taskbar.setIconBadge(Integer.toString(numDownloads));
+                else {
+                    taskbar.setIconBadge("");
+                }
+            }
         }
     }
 
@@ -163,17 +206,24 @@ public class MediathekGuiMac extends MediathekGui {
             }
         });
         desktop.setAboutHandler(e -> showAboutDialog());
-        desktop.setPreferencesHandler(e -> showSettingsDialog());
+        desktop.setPreferencesHandler(e -> getSettingsDialog().setVisible(true));
     }
 
+    /**
+     * Install MediathekView app icon in dock
+     */
     private void setupDockIcon() {
-        //setup the MediathekView Dock Icon
         try {
-            final URL url = this.getClass().getResource("/mediathek/res/MediathekView.png");
-            final BufferedImage appImage = ImageIO.read(url);
-            Taskbar.getTaskbar().setIconImage(appImage);
+            if (Taskbar.isTaskbarSupported()) {
+                var taskbar = Taskbar.getTaskbar();
+                if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
+                    final URL url = this.getClass().getResource("/mediathek/res/MediathekView.png");
+                    final BufferedImage appImage = ImageIO.read(url);
+                    Taskbar.getTaskbar().setIconImage(appImage);
+                }
+            }
         } catch (IOException ex) {
-            Log.errorLog(165623698, "OS X Application image could not be loaded");
+            logger.error("OS X Application image could not be loaded", ex);
         }
     }
 }

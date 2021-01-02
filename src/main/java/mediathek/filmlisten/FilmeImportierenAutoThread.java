@@ -1,7 +1,7 @@
 package mediathek.filmlisten;
 
-import mediathek.config.Konstanten;
 import mediathek.daten.ListeFilme;
+import mediathek.tool.GuiFunktionen;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -27,41 +27,25 @@ class FilmeImportierenAutoThread extends Thread {
     @Override
     public void run() {
         boolean ret;
-        if (listeFilme.isTooOldForDiff()) {
+        if (listeFilme.isEmpty() || !listeFilme.metaData().canUseDiffList()) {
             // dann eine komplette Liste laden
             listeFilme.clear();
-            ret = searchFullList(listeFilme, FilmListDownloadType.FULL);
+            ret = downloadAction.performDownload(GuiFunktionen.getFilmListUrl(FilmListDownloadType.FULL), listeFilme, days);
         } else {
             // nur ein Update laden
-            ret = searchFullList(listeFilmeDiff, FilmListDownloadType.DIFF_ONLY);
+            ret = downloadAction.performDownload(GuiFunktionen.getFilmListUrl(FilmListDownloadType.DIFF_ONLY), listeFilmeDiff, days);
             if (!ret || listeFilmeDiff.isEmpty()) {
                 // wenn diff, dann nochmal mit einer kompletten Liste versuchen
                 listeFilme.clear();
                 listeFilmeDiff.clear();
-                ret = searchFullList(listeFilme, FilmListDownloadType.FULL);
+                ret = downloadAction.performDownload(GuiFunktionen.getFilmListUrl(FilmListDownloadType.FULL), listeFilme, days);
             }
         }
 
         if (!ret) {
             /* listeFilme ist schon wieder null -> "FilmeLaden" */
-            logger.error("Es konnten keine Filme geladen werden!");
+            logger.warn("Es konnten keine Filme geladen werden!");
         }
         onFinished.onFinished(ret);
     }
-
-    private boolean searchFullList(ListeFilme liste, FilmListDownloadType state) {
-        String updateUrl = Konstanten.ROUTER_BASE_ADDRESS;
-
-        switch (state) {
-            case FULL:
-                updateUrl += "Filmliste-akt.xz";
-                break;
-            case DIFF_ONLY:
-                updateUrl += "Filmliste-diff.xz";
-                break;
-        }
-
-        return downloadAction.performDownload(updateUrl, liste, days);
-    }
-
 }

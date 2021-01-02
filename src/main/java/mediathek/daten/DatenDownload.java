@@ -3,7 +3,7 @@ package mediathek.daten;
 import mediathek.config.Daten;
 import mediathek.config.Konstanten;
 import mediathek.config.MVConfig;
-import mediathek.controller.history.MVUsedUrl;
+import mediathek.controller.history.SeenHistoryController;
 import mediathek.controller.starter.Start;
 import mediathek.gui.messages.RestartDownloadEvent;
 import mediathek.gui.messages.StartEvent;
@@ -13,12 +13,16 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.FastDateFormat;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.NotNull;
 
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.XMLStreamWriter;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.LinkedList;
 
 public final class DatenDownload implements Comparable<DatenDownload> {
 
@@ -79,7 +83,7 @@ public final class DatenDownload implements Comparable<DatenDownload> {
     public static final int DOWNLOAD_REF = 39;
     public static final String TAG = "Downlad";
     public static final int MAX_ELEM = 40;
-    public static final String[] XML_NAMES = {"Nr", "Filmnr", "Abo", "Sender", "Thema", "Titel", "Button-Start", "Button-Del",
+    private static final String[] XML_NAMES = {"Nr", "Filmnr", "Abo", "Sender", "Thema", "Titel", "Button-Start", "Button-Del",
             "Fortschritt", "Restzeit", "Geschwindigkeit", "Groesse"/*DOWNLOAD_GROESSE*/,
             "Datum", "Zeit", "Dauer", "HD", "UT",
             "Pause", "Geo", "Film-URL", "History-URL", "URL", "URL-rtmp", "URL-Untertitel",
@@ -93,12 +97,12 @@ public final class DatenDownload implements Comparable<DatenDownload> {
     public static boolean[] spaltenAnzeigen = new boolean[MAX_ELEM];
     public String[] arr;
     public Datum datumFilm = new Datum(0);
-    public DatenFilm film = null;
+    public DatenFilm film;
     public MVFilmSize mVFilmSize = new MVFilmSize();
-    public Start start = null;
-    public DatenPset pSet = null;
-    public DatenAbo abo = null;
-    public int nr = 0;
+    public Start start;
+    public DatenPset pSet;
+    public DatenAbo abo;
+    public int nr;
     public byte quelle = QUELLE_ALLE;
     public byte art = ART_DOWNLOAD;
 
@@ -125,9 +129,9 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         arr[DOWNLOAD_QUELLE] = String.valueOf(quelle);
         arr[DOWNLOAD_HISTORY_URL] = film.getUrl();
         if (aufloesung.isEmpty()) {
-            arr[DOWNLOAD_URL] = film.getUrlFuerAufloesung(pSet.arr[DatenPset.PROGRAMMSET_AUFLOESUNG]);
+            arr[DOWNLOAD_URL] = film.getUrlFuerAufloesung(FilmResolution.Enum.fromLegacyString(pSet.arr[DatenPset.PROGRAMMSET_AUFLOESUNG]));
         } else {
-            arr[DOWNLOAD_URL] = film.getUrlFuerAufloesung(aufloesung);
+            arr[DOWNLOAD_URL] = film.getUrlFuerAufloesung(FilmResolution.Enum.fromLegacyString(aufloesung));
         }
         arr[DatenDownload.DOWNLOAD_INFODATEI] = pSet.arr[DatenPset.PROGRAMMSET_INFODATEI];
         arr[DatenDownload.DOWNLOAD_SUBTITLE] = pSet.arr[DatenPset.PROGRAMMSET_SUBTITLE];
@@ -135,10 +139,75 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         arr[DatenDownload.DOWNLOAD_GEO] = film.getGeo().orElse("");
 
         // und jetzt noch die Dateigröße für die entsp. URL
-        setSizeFromUrl();
+        setGroesse("");
 
         aufrufBauen(pSet, film, abo, name, pfad);
         init();
+    }
+
+    /**
+     * Read the download data from config.
+     * @param parser The parser for the config file
+     * @return A valid DatenDownload object when everything went smooth.
+     * @throws XMLStreamException
+     */
+    public static DatenDownload getFromConfig(XMLStreamReader parser) throws XMLStreamException {
+        DatenDownload dl = new DatenDownload();
+
+        final int maxElem = dl.arr.length;
+        for (int i = 0; i < maxElem; ++i) {
+            if (dl.arr[i] == null) {
+                // damit Vorgaben nicht verschwinden!
+                dl.arr[i] = "";
+            }
+        }
+
+        while (parser.hasNext()) {
+            final int event = parser.next();
+            if (event == XMLStreamConstants.END_ELEMENT) {
+                if (parser.getLocalName().equals(TAG)) {
+                    break;
+                }
+            }
+            if (event == XMLStreamConstants.START_ELEMENT) {
+                for (int i = 0; i < maxElem; ++i) {
+                    if (parser.getLocalName().equals(XML_NAMES[i])) {
+                        dl.arr[i] = parser.getElementText();
+                        break;
+                    }
+                }
+            }
+        }
+
+        //everything went fine so initialize and return
+        dl.init();
+        return dl;
+    }
+
+    /**
+     * Store the download data in config file.
+     *
+     * @param writer  the writer to the config file.
+     */
+    public void writeConfigEntry(XMLStreamWriter writer) {
+        final int xmlMax = arr.length;
+        try {
+            writer.writeStartElement(TAG);
+            writer.writeCharacters("\n");
+            for (int i = 0; i < xmlMax; ++i) {
+                if (!arr[i].isEmpty()) {
+                    writer.writeCharacters("\t"); //Tab
+                    writer.writeStartElement(XML_NAMES[i]);
+                    writer.writeCharacters(arr[i]);
+                    writer.writeEndElement();
+                    writer.writeCharacters("\n");
+                }
+            }
+            writer.writeEndElement();
+            writer.writeCharacters("\n");
+        } catch (Exception ex) {
+            logger.error("writeConfigEntry", ex);
+        }
     }
 
     public static boolean anzeigen(int i) {
@@ -149,21 +218,16 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         }
     }
 
-    public static void startenDownloads(Daten ddaten, ArrayList<DatenDownload> downloads) {
+    public static void startenDownloads(ArrayList<DatenDownload> downloads) {
         // Start erstellen und zur Liste hinzufügen
-        final String zeit = sdf_datum.format(new Date());
-        LinkedList<MVUsedUrl> urlList = new LinkedList<>();
-        for (DatenDownload d : downloads) {
-            d.start = new Start();
-            urlList.add(new MVUsedUrl(zeit,
-                    d.arr[DatenDownload.DOWNLOAD_THEMA],
-                    d.arr[DatenDownload.DOWNLOAD_TITEL],
-                    d.arr[DatenDownload.DOWNLOAD_HISTORY_URL]));
+        try (var historyController = new SeenHistoryController()){
+            for (DatenDownload d : downloads) {
+                d.start = new Start();
+                historyController.writeManualEntry(d.arr[DatenDownload.DOWNLOAD_THEMA],
+                        d.arr[DatenDownload.DOWNLOAD_TITEL], d.arr[DatenDownload.DOWNLOAD_HISTORY_URL]);
+            }
         }
-        if (!urlList.isEmpty()) {
-            ddaten.getSeenHistoryController().createLineWriterThread(urlList);
-        }
-        ddaten.getMessageBus().publishAsync(new StartEvent());
+        Daten.getInstance().getMessageBus().publishAsync(new StartEvent());
     }
 
     public static String getTextBandbreite(long b) {
@@ -192,16 +256,9 @@ public final class DatenDownload implements Comparable<DatenDownload> {
             try {
                 if (datum.length() == 10) {
                     switch (s) {
-                        case "%1":
-                            ret = datum.substring(0, 2); // Tag
-                            break;
-                        case "%2":
-                            ret = datum.substring(3, 5); // Monat
-                            break;
-                        case "%3":
-                            ret = datum.substring(6); // Jahr
-                            break;
-
+                        case DMYHMSTags.DAY -> ret = datum.substring(0, 2);
+                        case DMYHMSTags.MONTH -> ret = datum.substring(3, 5);
+                        case DMYHMSTags.YEAR -> ret = datum.substring(6);
                     }
                 }
             } catch (Exception ex) {
@@ -221,16 +278,9 @@ public final class DatenDownload implements Comparable<DatenDownload> {
             try {
                 if (zeit.length() == 8) {
                     switch (s) {
-                        case "%4":
-                            ret = zeit.substring(0, 2); // Stunde
-                            break;
-                        case "%5":
-                            ret = zeit.substring(3, 5); // Minute
-                            break;
-                        case "%6":
-                            ret = zeit.substring(6); // Sekunde
-                            break;
-
+                        case DMYHMSTags.HOUR -> ret = zeit.substring(0, 2);
+                        case DMYHMSTags.MINUTE -> ret = zeit.substring(3, 5);
+                        case DMYHMSTags.SECOND -> ret = zeit.substring(6);
                     }
                 }
             } catch (Exception ex) {
@@ -273,11 +323,7 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         }
     }
 
-    public void setSizeFromUrl() {
-        setGroesse("");
-    }
-
-    public void setGroesse(String groesse) {
+    public void setGroesse(@NotNull String groesse) {
         if (film != null) {
             if (!groesse.isEmpty()) {
                 mVFilmSize.setSize(groesse);
@@ -358,11 +404,16 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         start = null;
     }
 
-    public void startDownload(Daten aDaten) {
+    public void startDownload() {
         // Start erstellen und zur Liste hinzufügen
         this.start = new Start();
-        aDaten.getSeenHistoryController().zeileSchreiben(arr[DatenDownload.DOWNLOAD_THEMA], arr[DatenDownload.DOWNLOAD_TITEL], arr[DatenDownload.DOWNLOAD_HISTORY_URL]);
-        aDaten.getMessageBus().publishAsync(new StartEvent());
+
+        try (var historyController = new SeenHistoryController()){
+            historyController.writeManualEntry(arr[DatenDownload.DOWNLOAD_THEMA],
+                    arr[DatenDownload.DOWNLOAD_TITEL], arr[DatenDownload.DOWNLOAD_HISTORY_URL]);
+        }
+
+        Daten.getInstance().getMessageBus().publishAsync(new StartEvent());
     }
 
     public DatenDownload getCopy() {
@@ -393,7 +444,12 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         art = datenDownload.art;
     }
 
-    public boolean istAbo() {
+    /**
+     * Was this download generated by an abo?
+     *
+     * @return true if it was generated by an abo, otherwise false.
+     */
+    public boolean isFromAbo() {
         return !arr[DatenDownload.DOWNLOAD_ABO].isEmpty();
     }
 
@@ -505,13 +561,14 @@ public final class DatenDownload implements Comparable<DatenDownload> {
             if (art == ART_DOWNLOAD) {
                 arr[DatenDownload.DOWNLOAD_PROGRAMM] = ART_DOWNLOAD_TXT;
             } else {
-                arr[DatenDownload.DOWNLOAD_PROGRAMM] = programm.arr[DatenProg.PROGRAMM_NAME];
+                arr[DatenDownload.DOWNLOAD_PROGRAMM] = programm != null ? programm.arr[DatenProg.PROGRAMM_NAME] : "Unknown";
             }
-
-            arr[DOWNLOAD_PROGRAMM_RESTART] = String.valueOf(programm.isRestart());
-            arr[DOWNLOAD_PROGRAMM_DOWNLOADMANAGER] = String.valueOf(programm.isDownloadManager());
-            dateinamePfadBauen(pSet, film, abo, nname, ppfad);
-            programmaufrufBauen(programm);
+            if (programm != null) {
+                arr[DOWNLOAD_PROGRAMM_RESTART] = String.valueOf(programm.isRestart());
+                arr[DOWNLOAD_PROGRAMM_DOWNLOADMANAGER] = String.valueOf(programm.isDownloadManager());
+                dateinamePfadBauen(pSet, film, abo, nname, ppfad);
+                programmaufrufBauen(programm);
+            }
         } catch (Exception ex) {
             logger.error("aufrufBauen", ex);
         }
@@ -535,6 +592,7 @@ public final class DatenDownload implements Comparable<DatenDownload> {
     private String replaceExec(String befehlsString) {
         befehlsString = StringUtils.replace(befehlsString, "**", arr[DatenDownload.DOWNLOAD_ZIEL_PFAD_DATEINAME]);
         befehlsString = StringUtils.replace(befehlsString, "%f", arr[DOWNLOAD_URL]);
+        //FIXME %F needs to be removed as we no longer use flvstreamer
         befehlsString = StringUtils.replace(befehlsString, "%F", arr[DOWNLOAD_URL_RTMP]);
         befehlsString = StringUtils.replace(befehlsString, "%a", arr[DOWNLOAD_ZIEL_PFAD]);
         befehlsString = StringUtils.replace(befehlsString, "%b", arr[DOWNLOAD_ZIEL_DATEINAME]);
@@ -648,13 +706,12 @@ public final class DatenDownload implements Comparable<DatenDownload> {
             name = getHeute_yyyyMMdd() + '_' + arr[DatenDownload.DOWNLOAD_THEMA] + '-' + arr[DatenDownload.DOWNLOAD_TITEL] + ".mp4";
         }
 
-        // in Win dürfen die Pfade nicht länger als 255 Zeichen haben (für die Infodatei kommen noch ".txt" dazu)
-        String[] pathName = {path, name};
-        GuiFunktionen.checkLengthPath(pathName);
+        FileSpecifier fileSpecifier = new FileSpecifier(path, name);
+        fileSpecifier.checkLength();
 
-        arr[DOWNLOAD_ZIEL_DATEINAME] = pathName[1];
-        arr[DOWNLOAD_ZIEL_PFAD] = pathName[0];
-        arr[DOWNLOAD_ZIEL_PFAD_DATEINAME] = GuiFunktionen.addsPfad(pathName[0], pathName[1]);
+        arr[DOWNLOAD_ZIEL_DATEINAME] = fileSpecifier.getFileName();
+        arr[DOWNLOAD_ZIEL_PFAD] = fileSpecifier.getPath();
+        arr[DOWNLOAD_ZIEL_PFAD_DATEINAME] = GuiFunktionen.addsPfad(fileSpecifier.getPath(), fileSpecifier.getFileName());
     }
 
     private String replaceString(String replStr, DatenFilm film) {
@@ -709,11 +766,11 @@ public final class DatenDownload implements Comparable<DatenDownload> {
         replStr = StringUtils.replace(replStr, "%i", String.valueOf(film.getFilmNr()));
 
         String res = "";
-        if (arr[DOWNLOAD_URL].equals(film.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_NORMAL))) {
+        if (arr[DOWNLOAD_URL].equals(film.getUrlFuerAufloesung(FilmResolution.Enum.NORMAL))) {
             res = "H";
-        } else if (arr[DOWNLOAD_URL].equals(film.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_HD))) {
+        } else if (arr[DOWNLOAD_URL].equals(film.getUrlFuerAufloesung(FilmResolution.Enum.HIGH_QUALITY))) {
             res = "HD";
-        } else if (arr[DOWNLOAD_URL].equals(film.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_KLEIN))) {
+        } else if (arr[DOWNLOAD_URL].equals(film.getUrlFuerAufloesung(FilmResolution.Enum.LOW))) {
             res = "L";
         }
         replStr = StringUtils.replace(replStr, "%q", res);
@@ -803,5 +860,18 @@ public final class DatenDownload implements Comparable<DatenDownload> {
             return sorter.compare(arr[DatenDownload.DOWNLOAD_THEMA], arg0.arr[DatenDownload.DOWNLOAD_THEMA]);
         }
         return ret;
+    }
+
+    /**
+     * Tags for getDMY() and getHMS() functions.
+     */
+    private static class DMYHMSTags {
+        public static final String DAY = "%1";
+        public static final String MONTH = "%2";
+        public static final String YEAR = "%3";
+
+        public static final String HOUR = "%4";
+        public static final String MINUTE = "%5";
+        public static final String SECOND = "%6";
     }
 }

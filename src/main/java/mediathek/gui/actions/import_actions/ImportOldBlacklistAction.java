@@ -4,7 +4,6 @@ import javafx.application.Platform;
 import javafx.scene.control.Alert;
 import javafx.stage.FileChooser;
 import mediathek.config.Konstanten;
-import mediathek.controller.IoXmlLesen;
 import mediathek.tool.javafx.FXErrorDialog;
 
 import javax.swing.*;
@@ -24,18 +23,18 @@ public class ImportOldBlacklistAction extends AbstractAction {
             var selectedFile = fileChooser.showOpenDialog(null);
             if (selectedFile != null) {
                 try {
-                    var configReader = new IoXmlLesen();
+                    var configReader = new OldConfigFileImporter();
                     var result = configReader.importAboBlacklist(selectedFile.getAbsolutePath(), false, true, false);
                     var alert = new ImportSettingsAlert(Alert.AlertType.INFORMATION);
                     String text = "Es wurden " + result.middle + " Einträge importiert.";
                     alert.setContentText(text);
                     alert.showAndWait();
                 } catch (Exception ex) {
-                    FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME,
+                    Platform.runLater(() -> FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME,
                             "Fehler beim Importieren der Blacklist",
                             "Es trat ein Fehler beim Import der Blacklist auf.\n" +
                                     "Sollte dies häufiger auftreten kontaktieren Sie bitte das Entwicklerteam.",
-                            ex);
+                            ex));
                 }
             } else {
                 var alert = new ImportSettingsAlert(Alert.AlertType.WARNING);
