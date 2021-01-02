@@ -3,8 +3,8 @@ package mediathek.daten;
 
 import mediathek.config.Konstanten;
 import mediathek.file.GetFile;
-import mediathek.tool.GuiFunktionen;
-import mediathek.tool.MVHttpClient;
+import mediathek.tool.NetUtils;
+import mediathek.tool.http.MVHttpClient;
 import mediathek.tool.models.TModel;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 import javax.swing.*;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.*;
 import java.net.ConnectException;
@@ -24,17 +25,14 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import static mediathek.tool.Functions.getOs;
 import static mediathek.tool.Functions.getOsString;
 
-@SuppressWarnings("serial")
 public class ListePsetVorlagen extends LinkedList<String[]> {
     public static final String BS_WIN_32 = "Windows-32Bit";
     public static final String BS_WIN_64 = "Windows-64Bit";
     public static final String BS_LINUX = "Linux";
     public static final String BS_MAC = "Mac";
     public static final String[] BS = {"", BS_WIN_32, BS_WIN_64, BS_LINUX, BS_MAC};
-    //
     public static final String PGR = "Vorlage";
     public static final String PGR_NAME = "Name";
     public static final int PGR_NAME_NR = 0;
@@ -97,20 +95,8 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
         if (listePset == null) {
             // dann nehmen wir halt die im jar-File
             // liefert das Standard Programmset für das entsprechende BS
-            InputStreamReader inReader;
-            switch (getOs()) {
-                case LINUX:
-                    inReader = new GetFile().getPsetVorlageLinux();
-                    break;
-                case MAC:
-                    inReader = new GetFile().getPsetVorlageMac();
-                    break;
-
-                default:
-                    inReader = new GetFile().getPsetVorlageWindows();
-            }
             // Standardgruppen laden
-            listePset = ListePsetVorlagen.importPset(inReader, true);
+            listePset = ListePsetVorlagen.importPset(GetFile.getLocalPsetTemplate(), true);
         }
 
         if (replaceMuster && listePset != null) {
@@ -171,7 +157,7 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
         try {
             ListePset result = null;
 
-            if (GuiFunktionen.istUrl(dateiUrl)) {
+            if (NetUtils.isUrl(dateiUrl)) {
                 Request request = new Request.Builder().url(dateiUrl).get().build();
                 try (Response response = MVHttpClient.getInstance().getReducedTimeOutClient().newCall(request).execute();
                      ResponseBody body = response.body()) {
@@ -213,10 +199,11 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
     private static ListePset importPset(InputStreamReader in, boolean log) {
         DatenPset datenPset = null;
         ListePset liste = new ListePset();
+        XMLStreamReader parser = null;
+
         try {
             XMLInputFactory inFactory = XMLInputFactory.newInstance();
             inFactory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.FALSE);
-            XMLStreamReader parser;
             parser = inFactory.createXMLStreamReader(in);
             while (parser.hasNext()) {
                 int event = parser.next();
@@ -250,6 +237,12 @@ public class ListePsetVorlagen extends LinkedList<String[]> {
             }
             return null;
         } finally {
+            if (parser != null) {
+                try {
+                    parser.close();
+                } catch (XMLStreamException ignored) {
+                }
+            }
             if (in != null) {
                 try {
                     in.close();

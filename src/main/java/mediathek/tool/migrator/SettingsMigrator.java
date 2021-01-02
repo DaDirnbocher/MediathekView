@@ -60,8 +60,34 @@ public class SettingsMigrator {
                     case "maxDownload":
                         migrateMaxNumDownloads(element);
                         break;
+
+                    case "system-panel-videoplayer-anzeigen":
+                        migrateSystemPanelVideoplayerAnzeigen(element);
+                        break;
+
+                    case "Blacklist-Geo-nicht-anzeigen":
+                        migrateDoNotShowGeoFilms(element);
+                        break;
                 }
             }
+        }
+    }
+
+    private void migrateDoNotShowGeoFilms(Element element) {
+        var node = element.getFirstChild();
+        if (node != null) {
+            boolean result = Boolean.parseBoolean(node.getNodeValue());
+            config.setProperty(ApplicationConfiguration.BLACKLIST_DO_NOT_SHOW_GEOBLOCKED_FILMS, result);
+            logger.debug("migrateDoNotShowGeoFilms");
+        }
+    }
+
+    private void migrateSystemPanelVideoplayerAnzeigen(Element element) {
+        var node = element.getFirstChild();
+        if (node != null) {
+            boolean result = Boolean.parseBoolean(node.getNodeValue());
+            config.setProperty(ApplicationConfiguration.APPLICATION_BUTTONS_PANEL_VISIBLE, result);
+            logger.debug("migrateSystemPanelVideoplayerAnzeigen");
         }
     }
 
@@ -90,7 +116,7 @@ public class SettingsMigrator {
             catch (NumberFormatException ex) {
                 anzahl = 0;
             }
-            config.setProperty(ApplicationConfiguration.FILMLIST_LOAD_NUM_DAYS, anzahl);
+            config.setProperty(ApplicationConfiguration.FilmList.LOAD_NUM_DAYS, anzahl);
             logger.debug("migrateFilmListAnzTage");
         }
     }

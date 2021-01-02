@@ -9,7 +9,12 @@ import mediathek.gui.messages.DownloadListChangedEvent;
 import mediathek.mainwindow.MediathekGui;
 import mediathek.tool.*;
 import org.apache.commons.configuration2.Configuration;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.SystemUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
@@ -26,42 +31,37 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.Executors;
 
-@SuppressWarnings("serial")
 public class DialogAddDownload extends JDialog {
     private DatenPset pSet;
-    private boolean ok = false;
-    private DatenDownload datenDownload = null;
-    private final Daten daten;
+    private DatenDownload datenDownload;
     private final DatenFilm datenFilm;
     private String orgPfad = "";
-    private final String aufloesung;
+    private final Optional<FilmResolution.Enum> requestedResolution;
     private String dateiGroesse_HD = "";
     private String dateiGroesse_Hoch = "";
     private String dateiGroesse_Klein = "";
-    private boolean nameGeaendert = false;
-    private boolean stopBeob = false;
+    private boolean nameGeaendert;
+    private boolean stopBeob;
     private final JTextComponent cbPathTextComponent;
-    private final Configuration config = ApplicationConfiguration.getConfiguration();
+    private static final Logger logger = LogManager.getLogger();
 
-
-    public DialogAddDownload(Frame parent, Daten daten, DatenFilm film, DatenPset pSet, String aufloesung) {
+    public DialogAddDownload(@NotNull Frame parent, @NotNull DatenFilm film, @Nullable DatenPset pSet, @NotNull Optional<FilmResolution.Enum> requestedResolution) {
         super(parent, true);
         initComponents();
 
-        filmBorder = (TitledBorder) jPanelSize.getBorder();
         cbPathTextComponent = ((JTextComponent) jComboBoxPfad.getEditor().getEditorComponent());
 
-        this.aufloesung = aufloesung;
-        this.daten = daten;
+        this.requestedResolution = requestedResolution;
         datenFilm = film;
         this.pSet = pSet;
 
         init();
         packIt();
-        if (parent != null) {
-            setLocationRelativeTo(parent);
-        }
+
+        setLocationRelativeTo(parent);
     }
 
     private void packIt() {
@@ -71,6 +71,21 @@ public class DialogAddDownload extends JDialog {
     }
 
     private void init() {
+        // launch async tasks first
+        var pool = Executors.newWorkStealingPool();
+        var hdFuture = pool.submit(() -> {
+            var url = datenFilm.getUrlFuerAufloesung(FilmResolution.Enum.HIGH_QUALITY);
+            return datenFilm.getDateigroesse(url);
+        });
+        var hochFuture = pool.submit(() -> {
+            var url = datenFilm.getUrl();
+            return datenFilm.getDateigroesse(url);
+        });
+        var kleinFuture = pool.submit(() -> {
+            var url = datenFilm.getUrlFuerAufloesung(FilmResolution.Enum.LOW);
+            return datenFilm.getDateigroesse(url);
+        });
+
         jButtonDelHistory.setIcon(Icons.ICON_BUTTON_DEL);
         jComboBoxPset.setModel(new DefaultComboBoxModel<>(Daten.listePset.getListeSpeichern().getObjectDataCombo()));
 
@@ -80,26 +95,33 @@ public class DialogAddDownload extends JDialog {
         jButtonZiel.setText("");
         if (Daten.listePset.getListeSpeichern().isEmpty()) {
             // Satz mit x, war wohl nix
-            ok = false;
-            beenden();
+            beenden(false);
         }
-        jButtonZiel.addActionListener(new ZielBeobachter());
+
+        jButtonZiel.addActionListener(l -> {
+            var initialDirectory = "";
+            if (!Objects.requireNonNull(jComboBoxPfad.getSelectedItem()).toString().isEmpty()) {
+                initialDirectory = jComboBoxPfad.getSelectedItem().toString();
+            }
+            var directory = FileDialogs.chooseDirectoryLocation(MediathekGui.ui(),"Film speichern",initialDirectory);
+            if (directory != null) {
+                var selectedDirectory = directory.getAbsolutePath();
+                jComboBoxPfad.addItem(selectedDirectory);
+                jComboBoxPfad.setSelectedItem(selectedDirectory);
+
+            }
+        });
+
         jButtonOk.addActionListener(e -> {
             if (check()) {
-                beenden();
+                beenden(true);
             }
         });
         getRootPane().setDefaultButton(jButtonOk);
 
-        EscapeKeyHandler.installHandler(this, () -> {
-            ok = false;
-            beenden();
-        });
+        EscapeKeyHandler.installHandler(this, () -> beenden(false));
 
-        jButtonAbbrechen.addActionListener(e -> {
-            ok = false;
-            beenden();
-        });
+        jButtonAbbrechen.addActionListener(e -> beenden(false));
 
         if (pSet != null) {
             jComboBoxPset.setSelectedItem(pSet.arr[DatenPset.PROGRAMMSET_NAME]);
@@ -179,35 +201,68 @@ public class DialogAddDownload extends JDialog {
 
             }
         });
-        jRadioButtonAufloesungHd.addActionListener(new BeobRadio());
-        jRadioButtonAufloesungKlein.addActionListener(new BeobRadio());
-        jRadioButtonAufloesungHoch.addActionListener(new BeobRadio());
-        jRadioButtonAufloesungHd.setEnabled(!datenFilm.getHighQualityUrl().isEmpty());
+
+        var listener = new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                setNameFilm();
+            }
+        };
+        jRadioButtonAufloesungHd.addActionListener(listener);
+        jRadioButtonAufloesungHd.setEnabled(!datenFilm.getUrlHighQuality().isEmpty());
+
+        jRadioButtonAufloesungKlein.addActionListener(listener);
         jRadioButtonAufloesungKlein.setEnabled(!datenFilm.getUrlKlein().isEmpty());
+
+        jRadioButtonAufloesungHoch.addActionListener(listener);
         jRadioButtonAufloesungHoch.setSelected(true);
+
+        try {
+            dateiGroesse_Hoch = hochFuture.get();
+        } catch (Exception e) {
+            dateiGroesse_Hoch = "";
+            logger.error("Failed to retrieve Hoch resolution", e);
+        }
+        if (!dateiGroesse_Hoch.isEmpty()) {
+            jRadioButtonAufloesungHoch.setText(jRadioButtonAufloesungHoch.getText() + "   [ " + dateiGroesse_Hoch + " MB ]");
+        }
+
         if (jRadioButtonAufloesungHd.isEnabled()) {
-            dateiGroesse_HD = datenFilm.getDateigroesse(datenFilm.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_HD));
+            try {
+                dateiGroesse_HD = hdFuture.get();
+            } catch (Exception e) {
+                dateiGroesse_HD = "";
+                logger.error("Failed to retrieve HD resolution", e);
+            }
             if (!dateiGroesse_HD.isEmpty()) {
                 jRadioButtonAufloesungHd.setText(jRadioButtonAufloesungHd.getText() + "   [ " + dateiGroesse_HD + " MB ]");
             }
         }
-        dateiGroesse_Hoch = datenFilm.getDateigroesse(datenFilm.getUrl());
-        if (!dateiGroesse_Hoch.isEmpty()) {
-            jRadioButtonAufloesungHoch.setText(jRadioButtonAufloesungHoch.getText() + "   [ " + dateiGroesse_Hoch + " MB ]");
-        }
+
         if (jRadioButtonAufloesungKlein.isEnabled()) {
-            dateiGroesse_Klein = datenFilm.getDateigroesse(datenFilm.getUrlFuerAufloesung(FilmResolution.AUFLOESUNG_KLEIN));
+            try {
+                dateiGroesse_Klein = kleinFuture.get();
+            } catch (Exception e) {
+                dateiGroesse_Klein = "";
+                logger.error("Failed to retrieve Klein resolution", e);
+            }
             if (!dateiGroesse_Klein.isEmpty()) {
                 jRadioButtonAufloesungKlein.setText(jRadioButtonAufloesungKlein.getText() + "   [ " + dateiGroesse_Klein + " MB ]");
             }
         }
+
+        //not needed anymore
+        pool.shutdown();
+
         jButtonDelHistory.addActionListener(e -> {
             MVConfig.add(MVConfig.Configs.SYSTEM_DIALOG_DOWNLOAD__PFADE_ZUM_SPEICHERN, "");
             jComboBoxPfad.setModel(new DefaultComboBoxModel<>(new String[]{orgPfad}));
         });
 
+        final Configuration config = ApplicationConfiguration.getConfiguration();
         jCheckBoxPfadSpeichern.setSelected(config.getBoolean(ApplicationConfiguration.DOWNLOAD_SHOW_LAST_USED_PATH, true));
         jCheckBoxPfadSpeichern.addActionListener(e -> config.setProperty(ApplicationConfiguration.DOWNLOAD_SHOW_LAST_USED_PATH, jCheckBoxPfadSpeichern.isSelected()));
+
         setupResolutionButtons();
         calculateAndCheckDiskSpace();
         nameGeaendert = false;
@@ -218,7 +273,7 @@ public class DialogAddDownload extends JDialog {
         if (!nameGeaendert) {
             // nur wenn vom Benutzer noch nicht geänert!
             stopBeob = true;
-            datenDownload = new DatenDownload(pSet, datenFilm, DatenDownload.QUELLE_DOWNLOAD, null, "", "", getFilmResolution());
+            datenDownload = new DatenDownload(pSet, datenFilm, DatenDownload.QUELLE_DOWNLOAD, null, "", "", getFilmResolution().toString());
             if (datenDownload.arr[DatenDownload.DOWNLOAD_ZIEL_DATEINAME].isEmpty()) {
                 // dann wird nicht gespeichert ==> eigenntlich falsche Seteinstellungen??
                 jTextFieldName.setEnabled(false);
@@ -248,18 +303,27 @@ public class DialogAddDownload extends JDialog {
         if (!strPath.isEmpty()) {
             try {
                 Path path = Paths.get(strPath);
-                if (!Files.exists(path)) {
-                    path = path.getParent();
+                if (Files.notExists(path)) {
+                    //getParent() may return null...therefore we need to bail out this loop at some point.
+                    while (Files.notExists(path) && (path != null)) {
+                        path = path.getParent();
+                    }
                 }
-                final FileStore fileStore = Files.getFileStore(path);
-                usableSpace = fileStore.getUsableSpace();
-            } catch (Exception ignore) {
+
+                if (path == null) {
+                    //there is no way to determine usable space...
+                    usableSpace = 0;
+                } else {
+                    final FileStore fileStore = Files.getFileStore(path);
+                    usableSpace = fileStore.getUsableSpace();
+                }
+            } catch (Exception ex) {
+                logger.error("getFreeDiskSpace Failed",ex);
             }
         }
         return usableSpace;
     }
 
-    private final TitledBorder filmBorder;
     private static final String TITLED_BORDER_STRING = "Download-Qualität";
 
     /**
@@ -271,9 +335,10 @@ public class DialogAddDownload extends JDialog {
         jRadioButtonAufloesungKlein.setForeground(Color.black);
 
         try {
+            var filmBorder = (TitledBorder)jPanelSize.getBorder();
             long usableSpace = getFreeDiskSpace(cbPathTextComponent.getText());
             if (usableSpace > 0) {
-                filmBorder.setTitle(TITLED_BORDER_STRING + " [ Freier Speicherplatz: " + ByteUnitUtil.byteCountToDisplaySize(usableSpace) + " ]");
+                filmBorder.setTitle(TITLED_BORDER_STRING + " [ Freier Speicherplatz: " + FileUtils.byteCountToDisplaySize(usableSpace) + " ]");
             } else {
                 filmBorder.setTitle(TITLED_BORDER_STRING);
             }
@@ -281,7 +346,7 @@ public class DialogAddDownload extends JDialog {
             jPanelSize.repaint();
 
             // jetzt noch prüfen, obs auf die Platte passt
-            usableSpace /= 1_000_000;
+            usableSpace /= FileSize.ONE_MiB;
             if (usableSpace > 0) {
                 int size;
                 if (!dateiGroesse_HD.isEmpty()) {
@@ -359,21 +424,33 @@ public class DialogAddDownload extends JDialog {
         MVConfig.add(MVConfig.Configs.SYSTEM_DIALOG_DOWNLOAD__PFADE_ZUM_SPEICHERN, s);
     }
 
+    private boolean isHighQualityRequested() {
+        return pSet.arr[DatenPset.PROGRAMMSET_AUFLOESUNG].equals(FilmResolution.Enum.HIGH_QUALITY.toString())
+                && !datenFilm.getUrlHighQuality().isEmpty();
+    }
+
+    private boolean isLowQualityRequested() {
+        return pSet.arr[DatenPset.PROGRAMMSET_AUFLOESUNG].equals(FilmResolution.Enum.LOW.toString()) &&
+                !datenFilm.getUrlKlein().isEmpty();
+    }
+
+    private boolean highQualityMandated;
     /**
      * Setup the resolution radio buttons based on available download URLs.
      */
     private void setupResolutionButtons() {
         pSet = Daten.listePset.getListeSpeichern().get(jComboBoxPset.getSelectedIndex());
-        if (aufloesung.equals(FilmResolution.AUFLOESUNG_HD) || pSet.arr[DatenPset.PROGRAMMSET_AUFLOESUNG].equals(FilmResolution.AUFLOESUNG_HD)
-                && !datenFilm.getHighQualityUrl().isEmpty()) {
-            /* Dann wurde im Filter HD ausgewählt und wird voreingestellt */
+        requestedResolution.ifPresent(it -> highQualityMandated = it == FilmResolution.Enum.HIGH_QUALITY);
+        if (highQualityMandated || isHighQualityRequested()) {
             jRadioButtonAufloesungHd.setSelected(true);
-        } else if (pSet.arr[DatenPset.PROGRAMMSET_AUFLOESUNG].equals(FilmResolution.AUFLOESUNG_KLEIN) && !datenFilm.getUrlKlein().isEmpty()) {
+        } else if (isLowQualityRequested()) {
             jRadioButtonAufloesungKlein.setSelected(true);
         } else {
             jRadioButtonAufloesungHoch.setSelected(true);
         }
+
         jCheckBoxInfodatei.setSelected(Boolean.parseBoolean(pSet.arr[DatenPset.PROGRAMMSET_INFODATEI]));
+
         if (datenFilm.getUrlSubtitle().isEmpty()) {
             // dann gibts keinen Subtitle
             jCheckBoxSubtitle.setEnabled(false);
@@ -388,13 +465,13 @@ public class DialogAddDownload extends JDialog {
      *
      * @return The resolution as a string.
      */
-    private String getFilmResolution() {
+    private FilmResolution.Enum getFilmResolution() {
         if (jRadioButtonAufloesungHd.isSelected()) {
-            return FilmResolution.AUFLOESUNG_HD;
+            return FilmResolution.Enum.HIGH_QUALITY;
         } else if (jRadioButtonAufloesungKlein.isSelected()) {
-            return FilmResolution.AUFLOESUNG_KLEIN;
+            return FilmResolution.Enum.LOW;
         } else {
-            return FilmResolution.AUFLOESUNG_NORMAL;
+            return FilmResolution.Enum.NORMAL;
         }
     }
 
@@ -409,7 +486,7 @@ public class DialogAddDownload extends JDialog {
     }
 
     private boolean check() {
-        ok = false;
+        var ok = false;
         String pfad = Objects.requireNonNull(jComboBoxPfad.getSelectedItem()).toString();
         String name = jTextFieldName.getText();
         if (datenDownload != null) {
@@ -429,71 +506,24 @@ public class DialogAddDownload extends JDialog {
         return ok;
     }
 
-    private void beenden() {
+    private void beenden(boolean ok) {
         if (ok) {
             // jetzt wird mit den angegebenen Pfaden gearbeitet
-            datenDownload = new DatenDownload(pSet, datenFilm, DatenDownload.QUELLE_DOWNLOAD, null, jTextFieldName.getText(), Objects.requireNonNull(jComboBoxPfad.getSelectedItem()).toString(), getFilmResolution());
+            datenDownload = new DatenDownload(pSet, datenFilm, DatenDownload.QUELLE_DOWNLOAD, null, jTextFieldName.getText(), Objects.requireNonNull(jComboBoxPfad.getSelectedItem()).toString(), getFilmResolution().toString());
             datenDownload.setGroesse(getFilmSize());
             datenDownload.arr[DatenDownload.DOWNLOAD_INFODATEI] = Boolean.toString(jCheckBoxInfodatei.isSelected());
             datenDownload.arr[DatenDownload.DOWNLOAD_SUBTITLE] = Boolean.toString(jCheckBoxSubtitle.isSelected());
+
+            final var daten = Daten.getInstance();
             daten.getListeDownloads().addMitNummer(datenDownload);
             daten.getMessageBus().publishAsync(new DownloadListChangedEvent());
             if (jCheckBoxStarten.isSelected()) {
                 // und evtl. auch gleich starten
-                datenDownload.startDownload(daten);
+                datenDownload.startDownload();
             }
         }
         saveComboPfad(jComboBoxPfad, orgPfad);
         this.dispose();
-    }
-
-    private class BeobRadio implements ActionListener {
-
-        @Override
-        public void actionPerformed(ActionEvent e) {
-            setNameFilm();
-        }
-    }
-
-    private class ZielBeobachter implements ActionListener {
-
-        @Override
-        public void actionPerformed(ActionEvent e) {
-            //we can use native directory chooser on Mac...
-            if (SystemUtils.IS_OS_MAC_OSX) {
-                //we want to select a directory only, so temporarily change properties
-                System.setProperty("apple.awt.fileDialogForDirectories", "true");
-                FileDialog chooser = new FileDialog(MediathekGui.ui(), "Film speichern");
-                chooser.setVisible(true);
-                if (chooser.getFile() != null) {
-                    //A directory was selected, that means Cancel was not pressed
-                    try {
-                        jComboBoxPfad.addItem(chooser.getDirectory() + chooser.getFile());
-                        jComboBoxPfad.setSelectedItem(chooser.getDirectory() + chooser.getFile());
-                    } catch (Exception ex) {
-                        Log.errorLog(356871087, ex);
-                    }
-                }
-                System.setProperty("apple.awt.fileDialogForDirectories", "false");
-            } else {
-                //use the cross-platform swing chooser
-                int returnVal;
-                JFileChooser chooser = new JFileChooser();
-                if (!Objects.requireNonNull(jComboBoxPfad.getSelectedItem()).toString().isEmpty()) {
-                    chooser.setCurrentDirectory(new File(jComboBoxPfad.getSelectedItem().toString()));
-                }
-                chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-                returnVal = chooser.showOpenDialog(null);
-                if (returnVal == JFileChooser.APPROVE_OPTION) {
-                    try {
-                        jComboBoxPfad.addItem(chooser.getSelectedFile().getAbsolutePath());
-                        jComboBoxPfad.setSelectedItem(chooser.getSelectedFile().getAbsolutePath());
-                    } catch (Exception ex) {
-                        Log.errorLog(356871087, ex);
-                    }
-                }
-            }
-        }
     }
 
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents

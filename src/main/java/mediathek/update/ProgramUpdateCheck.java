@@ -1,6 +1,7 @@
 package mediathek.update;
 
 import mediathek.config.Daten;
+import mediathek.config.Konstanten;
 import mediathek.config.MVConfig;
 import mediathek.daten.DatenPset;
 import mediathek.daten.ListePset;
@@ -32,7 +33,7 @@ public class ProgramUpdateCheck implements AutoCloseable {
 
     private void searchForProgramUpdate() {
         var pgrUpdate = new ProgrammUpdateSuchen();
-        pgrUpdate.checkVersion(false, true, false);
+        pgrUpdate.checkVersion(false, true, false, true);
     }
 
     private void checkForPsetUpdates() {
@@ -116,7 +117,13 @@ public class ProgramUpdateCheck implements AutoCloseable {
                 //we have internet...
                 SwingUtilities.invokeLater(() -> gui.enableUpdateMenuItem(false));
 
-                searchForProgramUpdate();
+                var externalUpdateCheck = System.getProperty(Konstanten.EXTERNAL_UPDATE_PROPERTY);
+                if (externalUpdateCheck == null || !externalUpdateCheck.equalsIgnoreCase("true")) {
+                    searchForProgramUpdate();
+                }
+                else {
+                    logger.info("External Update Mechanism in use -> skip program update check");
+                }
 
                 checkForPsetUpdates();
             } else

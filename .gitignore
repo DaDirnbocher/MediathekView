@@ -16,3 +16,6 @@ deploy.key
 RepoZugang.properties
 /target/
 /dependency-reduced-pom.xml
+*.iml
+/install4j*/
+/res/macOS/

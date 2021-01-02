@@ -17,12 +17,11 @@ mkdir -p Appimage/$APP.AppDir/usr/bin
 
 cd Appimage
 
-#URL=https://download.mediathekview.de/stabil/MediathekView-latest.tar.gz
-#wget -c "$URL" --trust-server-names
-#tar -xzf MediathekView*tar.gz
+
 cp ../target/media/MediathekView*.tar.gz ./
 tar -xzf MediathekView*.tar.gz
-VERSION=$(ls |grep MediathekView_|grep "tar" | cut -d "_" -f 3-5|cut -d'-' -f1|cut -d'.' -f1|sed 's/_/./g')
+# Beispiel Datiename MediathekView-13.6.0-SNAPSHOT-linux.tar.gz
+VERSION=$(ls |grep MediathekView-|grep "tar" | cut -d "-" -f 2)
 
 rm ./MediathekView*.tar.gz
 
@@ -78,7 +77,7 @@ cat > usr/bin/$LOWERAPP <<'EOF'
 
 dir=$(dirname $(readlink -f "$0"))
 cd "$dir"
-MediathekView -Xmx1G -jar MediathekView.jar "$@"
+MediathekView -Xmx2G --enable-preview -jar MediathekView.jar "$@"
 cd $OLDPWD
 EOF
 
@@ -108,6 +107,3 @@ rm -Rf Appimage
 cp out/MediathekView*.AppImage target/
 
 rm -Rf out
-
-
-

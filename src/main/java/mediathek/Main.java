@@ -1,24 +1,30 @@
 package mediathek;
 
 import com.google.common.base.Stopwatch;
-import com.jidesoft.utils.ThreadCheckingRepaintManager;
-import com.zaxxer.sansorm.SansOrm;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.control.Alert;
 import javafx.stage.Modality;
+import jiconfont.icons.FontAwesome;
+import jiconfont.swing.IconFontSwing;
 import mediathek.config.Config;
 import mediathek.config.Daten;
 import mediathek.config.Konstanten;
 import mediathek.config.MVConfig;
+import mediathek.controller.history.SeenHistoryMigrator;
 import mediathek.daten.DatenFilm;
 import mediathek.daten.PooledDatabaseConnection;
 import mediathek.gui.dialog.DialogStarteinstellungen;
+import mediathek.javafx.tool.JFXHiddenApplication;
 import mediathek.javafx.tool.JavaFxUtils;
 import mediathek.mac.MediathekGuiMac;
 import mediathek.mainwindow.MediathekGui;
 import mediathek.tool.*;
+import mediathek.tool.affinity.Affinity;
+import mediathek.tool.javafx.FXErrorDialog;
 import mediathek.tool.migrator.SettingsMigrator;
+import mediathek.tool.swing.SwingUIFontChanger;
+import mediathek.tool.swing.ThreadCheckingRepaintManager;
 import mediathek.windows.MediathekGuiWindows;
 import mediathek.x11.MediathekGuiX11;
 import org.apache.commons.io.FileUtils;
@@ -38,7 +44,6 @@ import picocli.CommandLine;
 
 import javax.swing.*;
 import java.awt.*;
-import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
@@ -100,7 +105,7 @@ public class Main {
         if (!Config.isPortableMode())
             path = Daten.getSettingsDirectory_String() + "/mediathekview.log";
         else
-            path = Config.baseFilePath + "/mediathekview.log"; //TODO maybe resolve is better in this case
+            path = Config.baseFilePath + "/mediathekview.log";
 
 
         final PatternLayout consolePattern;
@@ -241,19 +246,22 @@ public class Main {
     private static void printVersionInformation() {
         DateTimeFormatter formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
-        logger.debug("=== Java Information ===");
         logger.info("Programmstart: {}", formatter.format(LocalDateTime.ofInstant(Log.startZeit, ZoneId.systemDefault())));
         logger.info("Version: {}", Konstanten.MVVERSION);
 
-        final long maxMem = Runtime.getRuntime().maxMemory();
-        logger.debug("maxMemory: {} MB", maxMem / FileUtils.ONE_MB);
+        logger.info("=== Java Information ===");
 
-        logger.debug("Java:");
-        final String[] java = Functions.getJavaVersion();
-        for (String ja : java) {
-            logger.debug(ja);
-        }
-        logger.debug("===");
+        logger.info("Vendor: {}", SystemUtils.JAVA_VENDOR);
+        logger.info("VMname: {}", SystemUtils.JAVA_VM_NAME);
+        logger.info("Version: {}", SystemUtils.JAVA_VERSION);
+        logger.info("Runtime Version: {}", SystemUtils.JAVA_RUNTIME_VERSION);
+        final var runtime = Runtime.getRuntime();
+        logger.info("Maximum Memory: {} MB", runtime.maxMemory() / FileUtils.ONE_MB);
+
+        logger.info("Operating System: {}", SystemUtils.OS_NAME);
+        logger.info("OS Version: {}", SystemUtils.OS_VERSION);
+        logger.info("OS Arch: {}", SystemUtils.OS_ARCH);
+        logger.info("Available Processors: {}", runtime.availableProcessors());
     }
 
     /**
@@ -261,13 +269,7 @@ public class Main {
      * Unfortunately we cannot work from within jar :(
      */
     private static void copyUserAgentDatabase() {
-        String strDatabase;
-        //FIXME create function for this redundant code!
-        if (SystemUtils.IS_OS_MAC_OSX) {
-            strDatabase = GuiFunktionen.getHomePath() + File.separator + Konstanten.OSX_CACHE_DIRECTORY_NAME + File.separator;
-        } else {
-            strDatabase = Daten.getSettingsDirectory_String() + File.separator;
-        }
+        var strDatabase = PooledDatabaseConnection.getDatabaseCacheDirectory();
 
         Path p = Paths.get(strDatabase + Konstanten.USER_AGENT_DATABASE);
         logger.trace("deleting user agent database");
@@ -329,9 +331,23 @@ public class Main {
 
             Config.setPortableMode(parseResult.hasMatchedPositional(0));
             setupLogging();
+
+            final int numCpus = Config.getNumCpus();
+            if (numCpus != 0) {
+                var affinity = Affinity.getAffinityImpl();
+                affinity.setDesiredCpuAffinity(numCpus);
+            }
+
+            initializeJavaFX();
+
+            JFXHiddenApplication.launchApplication();
+            checkMemoryRequirements();
+            installSingleInstanceHandler();
+
             setupPortableMode();
 
             printVersionInformation();
+
             printJvmParameters();
             printArguments(args);
         } catch (CommandLine.ParameterException ex) {
@@ -349,12 +365,6 @@ public class Main {
 
         printDirectoryPaths();
 
-        initializeJavaFX();
-
-        checkMemoryRequirements();
-
-        installSingleInstanceHandler();
-
         setSystemLookAndFeel();
 
         if (!Functions.isDebuggerAttached()) {
@@ -367,8 +377,12 @@ public class Main {
 
         migrateOldConfigSettings();
 
+        //register FontAwesome font here as it may already be used at first start dialog..
+        IconFontSwing.register(FontAwesome.getIconFont());
+
         loadConfigurationData();
 
+        migrateSeenHistory();
         Daten.getInstance().launchHistoryDataLoading();
         
         Daten.getInstance().loadBookMarkData();
@@ -376,13 +390,51 @@ public class Main {
         deleteDatabase();
 
         if (MemoryUtils.isLowMemoryEnvironment()) {
-            setupDatabase();
             DatenFilm.Database.initializeDatabase();
         }
 
         copyUserAgentDatabase();
 
+        if (!SystemUtils.IS_OS_MAC_OSX)
+            changeGlobalFontSize();
+
         startGuiMode();
+    }
+
+    private static void changeGlobalFontSize() {
+        try {
+            var size = ApplicationConfiguration.getConfiguration().getFloat(ApplicationConfiguration.APPLICATION_UI_FONT_SIZE);
+            logger.info("Custom font size found, changing global UI settings");
+            SwingUIFontChanger fc = new SwingUIFontChanger();
+            fc.changeFontSize(size);
+        }
+        catch (Exception e) {
+            logger.info("No custom font size found.");
+        }
+    }
+
+    /**
+     * Migrate the old text file history to new database format
+     */
+    private static void migrateSeenHistory() {
+        try (SeenHistoryMigrator migrator = new SeenHistoryMigrator()) {
+            if (migrator.needsMigration()) {
+                migrator.migrate();
+            }
+        }
+        catch (Exception e) {
+            logger.error("migrateSeenHistory", e);
+            splashScreen.ifPresent(SplashScreen::close);
+            FXErrorDialog.showErrorDialogWithoutParent(Konstanten.PROGRAMMNAME,
+                            "Migration fehlgeschlagen",
+                            """
+                                    Bei der Migration der Historie der Filme ist ein Fehler aufgetreten.
+                                    Das Programm kann nicht fortfahren und wird beendet.
+                                    
+                                    Bitte überprüfen Sie die Fehlermeldung und suchen Sie Hilfe im Forum.
+                                    """, e);
+            System.exit(99);
+        }
     }
 
     @SuppressWarnings("unused")
@@ -454,14 +506,15 @@ public class Main {
             ReplaceList.init(); // einmal ein Muster anlegen, für Linux/OS X ist es bereits aktiv!
             Main.splashScreen.ifPresent(SplashScreen::close);
             //TODO replace with JavaFX dialog!!
-            var dialog = new DialogStarteinstellungen(null, daten);
+            var dialog = new DialogStarteinstellungen(null);
             dialog.setVisible(true);
+            dialog.toFront();
             MVConfig.loadSystemParameter();
         }
     }
 
     private static void printDirectoryPaths() {
-        logger.trace("Programmpfad: " + MVFunctionSys.getPathJar());
+        logger.trace("Programmpfad: " + MVFunctionSys.getPathToApplicationJar());
         logger.info("Verzeichnis Einstellungen: " + Daten.getSettingsDirectory_String());
     }
 
@@ -469,17 +522,12 @@ public class Main {
         if (!MemoryUtils.isLowMemoryEnvironment()) {
             //we can delete the database as it is not needed.
             try {
-                final String dbLocation = PooledDatabaseConnection.getDatabaseLocation() + "mediathekview.mv.db";
+                final String dbLocation = PooledDatabaseConnection.getDatabaseLocation() + "/mediathekview.mv.db";
                 Files.deleteIfExists(Paths.get(dbLocation));
             } catch (IOException e) {
                 logger.error("deleteDatabase()", e);
             }
         }
-    }
-
-    private static void setupDatabase() {
-        logger.trace("setupDatabase()");
-        SansOrm.initializeTxSimple(PooledDatabaseConnection.getInstance().getDataSource());
     }
 
     private static void installSingleInstanceHandler() {
@@ -500,7 +548,7 @@ public class Main {
     }
 
     private static void checkForOfficialOSXAppUse() {
-        final var osxOfficialApp = System.getProperty("OSX_OFFICIAL_APP");
+        final var osxOfficialApp = System.getProperty(Konstanten.MACOS_OFFICIAL_APP);
         if (osxOfficialApp == null || osxOfficialApp.isEmpty() || osxOfficialApp.equalsIgnoreCase("false")) {
             logger.warn("WARN: macOS app NOT launched from official launcher!");
         }
@@ -508,21 +556,17 @@ public class Main {
 
     private static void checkMemoryRequirements() {
         final var maxMem = Runtime.getRuntime().maxMemory();
-        // more than 450MB avail...
-        if (maxMem < 450 * FileUtils.ONE_MB) {
-            if (SystemUtils.isJavaAwtHeadless()) {
-                System.err.println("Die VM hat nicht genügend Arbeitsspeicher zugewiesen bekommen.");
-                System.err.println("Nutzen Sie den Startparameter -Xmx512M für Minimumspeicher");
-            } else {
-                JavaFxUtils.invokeInFxThreadAndWait(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle(Konstanten.PROGRAMMNAME);
-                    alert.setHeaderText("Speicherwarnung");
-                    alert.setContentText("MediathekView hat nicht genügend Arbeitsspeicher zugewiesen bekommen.\n" +
-                            "Es werden mindestens 512MB RAM benötigt.");
-                    alert.showAndWait();
-                });
-            }
+        if (maxMem < Konstanten.MINIMUM_MEMORY_THRESHOLD) {
+            JavaFxUtils.invokeInFxThreadAndWait(() -> {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle(Konstanten.PROGRAMMNAME);
+                alert.setHeaderText("Nicht genügend Arbeitsspeicher");
+                alert.setContentText("""
+                        Es werden mindestens 640MB RAM für einen halbwegs vernünftigen Betrieb benötigt.
+
+                        Das Programm wird nun beendet.""");
+                alert.showAndWait();
+            });
 
             System.exit(3);
         }
@@ -540,7 +584,7 @@ public class Main {
                 cleanupOsxFiles();
             }
 
-            if (Config.isDebugModeEnabled()) {
+            if (Config.isDebugModeEnabled() || Config.isInstallThreadCheckingRepaintManager()) {
                 // use for debugging EDT violations
                 RepaintManager.setCurrentManager(new ThreadCheckingRepaintManager());
                 logger.info("Swing Thread checking repaint manager installed.");

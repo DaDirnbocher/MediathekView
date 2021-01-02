@@ -30,8 +30,9 @@ public class LinuxNotificationCenter implements INotificationCenter, Closeable {
             for (var s : caps)
                 logger.debug("\t {}",s);
         }
-        catch (UnsatisfiedLinkError e) {
+        catch (UnsatisfiedLinkError | RuntimeException e) {
             nativeSupport = false;
+            logger.error("failed to initialize libNotify",e);
         }
     }
 

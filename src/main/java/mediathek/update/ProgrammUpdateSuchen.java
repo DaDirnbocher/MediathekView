@@ -5,8 +5,8 @@ import javafx.scene.control.Alert;
 import mediathek.config.Konstanten;
 import mediathek.config.MVConfig;
 import mediathek.mainwindow.MediathekGui;
-import mediathek.tool.MVHttpClient;
 import mediathek.tool.Version;
+import mediathek.tool.http.MVHttpClient;
 import mediathek.tool.javafx.FXErrorDialog;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -32,22 +32,29 @@ public class ProgrammUpdateSuchen {
     private static final Logger logger = LogManager.getLogger(ProgrammUpdateSuchen.class);
     private final ArrayList<String[]> listInfos = new ArrayList<>();
 
-    public void checkVersion(boolean anzeigen, boolean showProgramInformation, boolean showAllInformation) {
-        // prüft auf neue Version, aneigen: wenn true, dann AUCH wenn es keine neue Version gibt ein Fenster
+    /**
+     * Prüft auf neue Version; Updates und Programminfos.
+     * @param anzeigen wenn true, dann AUCH wenn es keine neue Version gibt ein Fenster
+     * @param showProgramInformation show program info dialog
+     * @param showAllInformation show all(outdated) infos
+     * @param silent If true, do not show no program info dialog
+     */
+    public void checkVersion(boolean anzeigen, boolean showProgramInformation, boolean showAllInformation,
+                             boolean silent) {
         Optional<ServerProgramInformation> opt = retrieveProgramInformation();
-        opt.ifPresentOrElse(progInfo -> {
+        opt.ifPresentOrElse(remoteProgramInfo -> {
             // Update-Info anzeigen
             SwingUtilities.invokeLater(() -> {
                 if (showProgramInformation)
-                    showProgramInformation(showAllInformation);
+                    showProgramInformation(showAllInformation, silent);
 
-                if (progInfo.getVersion().toNumber() == 0) {
-                    Exception ex = new RuntimeException("progInfo.getVersion() == 0");
+                if (remoteProgramInfo.version().isInvalid()) {
+                    Exception ex = new RuntimeException("progInfo.version() is invalid");
                     Platform.runLater(() -> FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME, UPDATE_SEARCH_TITLE, UPDATE_ERROR_MESSAGE, ex));
-                    logger.warn("getVersion().toNumber() == 0");
+                    logger.warn("progInfo.version() is invalid");
                 } else {
-                    if (checkForNewerVersion(progInfo.getVersion())) {
-                        UpdateNotificationDialog dlg = new UpdateNotificationDialog(MediathekGui.ui(), "Software Update", progInfo);
+                    if (Konstanten.MVVERSION.isOlderThan(remoteProgramInfo.version())) {
+                        UpdateNotificationDialog dlg = new UpdateNotificationDialog(MediathekGui.ui(), "Software Update", remoteProgramInfo.version());
                         dlg.setVisible(true);
                     } else if (anzeigen) {
                         Platform.runLater(() -> {
@@ -67,7 +74,7 @@ public class ProgrammUpdateSuchen {
         });
     }
 
-    private void displayInfoMessages(boolean showAll) {
+    private void displayInfoMessages(boolean showAll, boolean silent) {
         //display available info...
         try {
             int angezeigt = 0;
@@ -88,11 +95,15 @@ public class ProgrammUpdateSuchen {
                     text.append('\n');
                 }
             }
-            if (text.length() > 0) {
+            if (!text.isEmpty()) {
                 //TODO add new dialog with web view here!
                 JDialog dlg = new DialogHinweisUpdate(null, text.toString());
                 dlg.setVisible(true);
                 MVConfig.add(MVConfig.Configs.SYSTEM_HINWEIS_NR_ANGEZEIGT, Integer.toString(index));
+            }
+            else {
+                if (!silent)
+                    displayNoNewInfoMessage();
             }
         } catch (Exception ex) {
             logger.error("displayInfoMessages failed", ex);
@@ -103,28 +114,18 @@ public class ProgrammUpdateSuchen {
         Platform.runLater(() -> {
             Alert alert = new Alert(Alert.AlertType.INFORMATION);
             alert.setTitle(Konstanten.PROGRAMMNAME);
-            alert.setHeaderText(UPDATE_SEARCH_TITLE);
-            alert.setContentText("Es liegen keine Programminfos vor.");
+            alert.setHeaderText("Programminformationen");
+            alert.setContentText("Es liegen keine aktuellen Informationen vor.");
             alert.showAndWait();
         });
     }
 
-    private void showProgramInformation(boolean showAll) {
+    private void showProgramInformation(boolean showAll, boolean silent) {
         if (listInfos.isEmpty()) {
             if (showAll)
                 displayNoNewInfoMessage();
         } else
-            displayInfoMessages(showAll);
-    }
-
-    /**
-     * Check if a newer version exists.
-     *
-     * @param info the remote version number.
-     * @return true if there is a newer version
-     */
-    private boolean checkForNewerVersion(Version info) {
-        return (Konstanten.MVVERSION.compare(info) == 1);
+            displayInfoMessages(showAll, silent);
     }
 
     /**
@@ -134,7 +135,6 @@ public class ProgrammUpdateSuchen {
      */
     private Optional<ServerProgramInformation> retrieveProgramInformation() {
         XMLStreamReader parser = null;
-        ServerProgramInformation progInfo;
 
         XMLInputFactory inFactory = XMLInputFactory.newInstance();
         inFactory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.FALSE);
@@ -148,20 +148,14 @@ public class ProgrammUpdateSuchen {
                 try (InputStream is = body.byteStream();
                      InputStreamReader inReader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
                     parser = inFactory.createXMLStreamReader(inReader);
-                    progInfo = new ServerProgramInformation();
+                    String version = "";
 
                     while (parser.hasNext()) {
                         final int event = parser.next();
                         if (event == XMLStreamConstants.START_ELEMENT) {
                             switch (parser.getLocalName()) {
                                 case ServerProgramInformation.ParserTags.VERSION:
-                                    progInfo.setVersion(parser.getElementText());
-                                    break;
-                                case ServerProgramInformation.ParserTags.RELEASE_NOTES:
-                                    progInfo.setReleaseNotes(parser.getElementText());
-                                    break;
-                                case ServerProgramInformation.ParserTags.UPDATE_URL:
-                                    progInfo.setUpdateUrl(parser.getElementText());
+                                    version = parser.getElementText();
                                     break;
                                 case ServerProgramInformation.ParserTags.INFO:
                                     int count = parser.getAttributeCount();
@@ -182,7 +176,7 @@ public class ProgrammUpdateSuchen {
                         }
                     }
 
-                    return Optional.of(progInfo);
+                    return Optional.of(new ServerProgramInformation(Version.fromString(version)));
                 } finally {
                     if (parser != null) {
                         try {
@@ -197,4 +191,5 @@ public class ProgrammUpdateSuchen {
             return Optional.empty();
         }
     }
+
 }

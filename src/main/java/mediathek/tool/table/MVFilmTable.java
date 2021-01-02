@@ -1,8 +1,9 @@
 package mediathek.tool.table;
 
-import mediathek.config.Daten;
 import mediathek.config.MVConfig;
 import mediathek.daten.DatenFilm;
+import mediathek.gui.tabs.tab_film.GuiFilme;
+import mediathek.tool.ApplicationConfiguration;
 import mediathek.tool.FilmSize;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -17,6 +18,24 @@ public class MVFilmTable extends ASelectableMVTable {
     private static final long serialVersionUID = -5362792359176783146L;
     private static final Logger logger = LogManager.getLogger();
     private MyRowSorter<TableModel> sorter;
+
+    @Override
+    protected void loadDefaultFontSize() {
+        var config = ApplicationConfiguration.getConfiguration();
+        try {
+            final var fontSize = config.getFloat(ApplicationConfiguration.TAB_FILM_FONT_SIZE);
+            var newFont = getDefaultFont().deriveFont(fontSize);
+            setDefaultFont(newFont);
+        }
+        catch (Exception ignored) {}
+    }
+
+    @Override
+    protected void saveDefaultFontSize() {
+        var config = ApplicationConfiguration.getConfiguration();
+        final var fontSize = getDefaultFont().getSize2D();
+        config.setProperty(ApplicationConfiguration.TAB_FILM_FONT_SIZE, fontSize);
+    }
 
     public MVFilmTable() {
         super();
@@ -39,7 +58,7 @@ public class MVFilmTable extends ASelectableMVTable {
         //logger.debug("setupTableType()");
 
         maxSpalten = DatenFilm.MAX_ELEM;
-        spaltenAnzeigen = getSpaltenEinAus(Daten.spaltenAnzeigenFilme, DatenFilm.MAX_ELEM);
+        spaltenAnzeigen = getSpaltenEinAus(GuiFilme.VISIBLE_COLUMNS, DatenFilm.MAX_ELEM);
         indexSpalte = DatenFilm.FILM_NR;
         nrDatenSystem = MVConfig.Configs.SYSTEM_EIGENSCHAFTEN_TABELLE_FILME;
         iconAnzeigenStr = MVConfig.Configs.SYSTEM_TAB_FILME_ICON_ANZEIGEN;
@@ -54,32 +73,13 @@ public class MVFilmTable extends ASelectableMVTable {
         reihe[i] = i;
         breite[i] = 200;
         switch (i) {
-            case DatenFilm.FILM_NR:
-                breite[i] = 75;
-                break;
-            case DatenFilm.FILM_TITEL:
-                breite[i] = 300;
-                break;
-            case DatenFilm.FILM_DATUM:
-            case DatenFilm.FILM_ZEIT:
-            case DatenFilm.FILM_SENDER:
-            case DatenFilm.FILM_GROESSE:
-            case DatenFilm.FILM_DAUER:
-            case DatenFilm.FILM_GEO:
-                breite[i] = 100;
-                break;
-            case DatenFilm.FILM_URL:
-                breite[i] = 500;
-                break;
-            case DatenFilm.FILM_ABSPIELEN:
-            case DatenFilm.FILM_AUFZEICHNEN:
-            case DatenFilm.FILM_MERKEN:
-                breite[i] = 20;
-                break;
-            case DatenFilm.FILM_HD:
-            case DatenFilm.FILM_UT:
-                breite[i] = 50;
-                break;
+            case DatenFilm.FILM_NR -> breite[i] = 75;
+            case DatenFilm.FILM_TITEL -> breite[i] = 300;
+            case DatenFilm.FILM_DATUM, DatenFilm.FILM_ZEIT, DatenFilm.FILM_SENDER, DatenFilm.FILM_GROESSE,
+                    DatenFilm.FILM_DAUER, DatenFilm.FILM_GEO -> breite[i] = 100;
+            case DatenFilm.FILM_URL -> breite[i] = 500;
+            case DatenFilm.FILM_ABSPIELEN, DatenFilm.FILM_AUFZEICHNEN, DatenFilm.FILM_MERKEN -> breite[i] = 20;
+            case DatenFilm.FILM_HD, DatenFilm.FILM_UT -> breite[i] = 50;
         }
     }
 
@@ -100,20 +100,7 @@ public class MVFilmTable extends ASelectableMVTable {
 
     @Override
     protected void spaltenAusschalten() {
-        //logger.debug("spaltenAusschalten()");
-
-        for (int i = 0; i < maxSpalten; ++i) {
-            switch (i) {
-                case DatenFilm.FILM_NEU:
-                case DatenFilm.FILM_URL_HD:
-                case DatenFilm.FILM_URL_KLEIN:
-                case DatenFilm.FILM_URL_HISTORY:
-                case DatenFilm.FILM_URL_SUBTITLE:
-                case DatenFilm.FILM_REF:
-                    breite[i] = 0;
-                    break;
-            }
-        }
+        // do nothing here
     }
 
     @Override
@@ -140,10 +127,13 @@ public class MVFilmTable extends ASelectableMVTable {
         }
     }
 
+    /**
+     * Setzt die gemerkte Position der Spalten in der Tabelle wieder.
+     * Ziemlich ineffizient!
+     */
     @Override
     public void setSpalten() {
         //logger.debug("setSpalten()");
-        // gemerkte Einstellungen der Tabelle wieder setzen
         try {
             changeColumnWidth();
 
@@ -151,7 +141,9 @@ public class MVFilmTable extends ASelectableMVTable {
             changeColumnWidth2();
 
             for (int i = 0; i < reihe.length && i < getColumnCount(); ++i) {
-                model.moveColumn(convertColumnIndexToView(reihe[i]), i);
+                //move only when there are changes...
+                if (reihe[i] != i)
+                    model.moveColumn(convertColumnIndexToView(reihe[i]), i);
             }
 
             // restore sort keys

@@ -13,12 +13,13 @@ import mediathek.filmlisten.reader.FilmListReader;
 import mediathek.gui.actions.FilmListWriteWorkerTask;
 import mediathek.javafx.FilmListFilterTask;
 import mediathek.javafx.tool.FXProgressPane;
+import mediathek.javafx.tool.JFXHiddenApplication;
 import mediathek.javafx.tool.JavaFxUtils;
 import mediathek.mainwindow.MediathekGui;
 import mediathek.tool.ApplicationConfiguration;
 import mediathek.tool.FilmListUpdateType;
 import mediathek.tool.GuiFunktionen;
-import mediathek.tool.MVHttpClient;
+import mediathek.tool.http.MVHttpClient;
 import mediathek.tool.javafx.FXErrorDialog;
 import okhttp3.HttpUrl;
 import okhttp3.Request;
@@ -82,6 +83,16 @@ public class FilmeLaden {
         });
     }
 
+    private void showNoUpdateAvailableDialog() {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle(Konstanten.PROGRAMMNAME);
+            alert.setHeaderText(DIALOG_TITLE);
+            alert.setContentText(NO_UPDATE_AVAILABLE);
+            alert.showAndWait();
+        });
+    }
+
     /**
      * Check if a newer filmlist id is available on the remote server in order to prevent unnecessary filmlist downloads...
      *
@@ -116,13 +127,7 @@ public class FilmeLaden {
 
             if (!result) {
                 if (showDialogs) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                        alert.setTitle(Konstanten.PROGRAMMNAME);
-                        alert.setHeaderText(DIALOG_TITLE);
-                        alert.setContentText(NO_UPDATE_AVAILABLE);
-                        alert.showAndWait();
-                    });
+                    showNoUpdateAvailableDialog();
                 } else
                     logger.info(NO_UPDATE_AVAILABLE);
             }
@@ -137,7 +142,8 @@ public class FilmeLaden {
         } catch (IOException ex) {
             logger.error("IOxception:", ex);
             Platform.runLater(() ->
-                    FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME, DIALOG_TITLE, "Netzwerkfehler aufgetreten!", ex));
+                    FXErrorDialog.showErrorDialog(Konstanten.PROGRAMMNAME, DIALOG_TITLE,
+                            "Netzwerkfehler aufgetreten!", ex));
         } catch (Exception ex) {
             logger.error("check for filmliste.id failed", ex);
             if (showDialogs)
@@ -164,8 +170,7 @@ public class FilmeLaden {
         //always perform update when list is empty
         if (listeFilme.isEmpty()) {
             return true;
-        }
-        else {
+        } else {
             //remote download is using an empty file name!...
             //or somebody put a web adress into the text field
             if (dateiUrl.isEmpty() || dateiUrl.startsWith("http")) {
@@ -212,7 +217,7 @@ public class FilmeLaden {
 
             daten.getListeFilmeNachBlackList().clear();
 
-            final int days = ApplicationConfiguration.getConfiguration().getInt(ApplicationConfiguration.FILMLIST_LOAD_NUM_DAYS,0);
+            final int days = ApplicationConfiguration.getConfiguration().getInt(ApplicationConfiguration.FilmList.LOAD_NUM_DAYS, 0);
             if (dateiUrl.isEmpty()) {
                 // Filme als Liste importieren, Url automatisch ermitteln
                 logger.info("Filmliste laden (Netzwerk)");
@@ -245,7 +250,10 @@ public class FilmeLaden {
             daten.getListeFilmeNachBlackList().clear();
             // Filme als Liste importieren, feste URL/Datei
             logger.info("Filmliste laden von: " + dateiUrl);
-            final int num_days = ApplicationConfiguration.getConfiguration().getInt(ApplicationConfiguration.FILMLIST_LOAD_NUM_DAYS,0);
+            final int num_days = ApplicationConfiguration.getConfiguration().getInt(ApplicationConfiguration.FilmList.LOAD_NUM_DAYS, 0);
+            if (dateiUrl.isEmpty()) {
+                dateiUrl = GuiFunktionen.getFilmListUrl(FilmListDownloadType.FULL);
+            }
             importFilmliste.importFromFile(dateiUrl, diffListe, num_days);
         }
     }
@@ -289,17 +297,16 @@ public class FilmeLaden {
             logger.info("Filmliste laden war fehlerhaft, alte Liste wird wieder geladen");
             Platform.runLater(() -> {
                 Alert alert = new Alert(Alert.AlertType.ERROR);
-                alert.setTitle(Konstanten.PROGRAMMNAME);
                 alert.setHeaderText("Fehler");
                 alert.setContentText("Das Laden der Filmliste hat nicht geklappt!");
-                alert.show();
+                JFXHiddenApplication.showAlert(alert, ui);
             });
 
             // dann die alte Liste wieder laden
             listeFilme.clear();
 
             try (FilmListReader reader = new FilmListReader()) {
-                final int num_days = ApplicationConfiguration.getConfiguration().getInt(ApplicationConfiguration.FILMLIST_LOAD_NUM_DAYS,0);
+                final int num_days = ApplicationConfiguration.getConfiguration().getInt(ApplicationConfiguration.FilmList.LOAD_NUM_DAYS, 0);
                 reader.readFilmListe(Daten.getDateiFilmliste(), listeFilme, num_days);
             }
             logger.info("");
@@ -355,8 +362,7 @@ public class FilmeLaden {
         listeFilme.parallelStream()
                 .peek(film -> film.setNew(false))
                 .filter(film -> !hashSet.contains(film.getUrl()))
-                .forEach(film
-                        -> {
+                .forEach(film -> {
                     film.setNew(true);
                     listeFilme.neueFilme = true;
                 });
@@ -366,11 +372,9 @@ public class FilmeLaden {
         hashSet.clear();
     }
 
-    public void notifyStart(ListenerFilmeLadenEvent event) {
-        final ListenerFilmeLadenEvent e = event;
+    public void notifyStart(ListenerFilmeLadenEvent e) {
         try {
-            SwingUtilities.invokeLater(()
-                    -> {
+            SwingUtilities.invokeLater(() -> {
                 for (ListenerFilmeLaden l : listeners.getListeners(ListenerFilmeLaden.class)) {
                     l.start(e);
                 }
@@ -380,11 +384,9 @@ public class FilmeLaden {
         }
     }
 
-    public void notifyProgress(ListenerFilmeLadenEvent event) {
-        final ListenerFilmeLadenEvent e = event;
+    public void notifyProgress(ListenerFilmeLadenEvent e) {
         try {
-            SwingUtilities.invokeLater(()
-                    -> {
+            SwingUtilities.invokeLater(() -> {
                 for (ListenerFilmeLaden l : listeners.getListeners(ListenerFilmeLaden.class)) {
                     l.progress(e);
                 }
@@ -394,25 +396,21 @@ public class FilmeLaden {
         }
     }
 
-    public void notifyFertig(ListenerFilmeLadenEvent event) {
-        final ListenerFilmeLadenEvent e = event;
+    public void notifyFertig(ListenerFilmeLadenEvent e) {
+        final var listListeners = listeners.getListeners(ListenerFilmeLaden.class);
+
         try {
-            SwingUtilities.invokeLater(()
-                    -> {
-                for (ListenerFilmeLaden l : listeners.getListeners(ListenerFilmeLaden.class)) {
-                    l.fertig(e);
+            SwingUtilities.invokeLater(() -> {
+                for (ListenerFilmeLaden lst : listListeners) {
+                    lst.fertig(e);
                 }
             });
-        } catch (Exception ex) {
-            logger.error(ex);
-        }
-        try {
+
             if (!onlyOne) {
                 onlyOne = true;
-                SwingUtilities.invokeLater(()
-                        -> {
-                    for (ListenerFilmeLaden l : listeners.getListeners(ListenerFilmeLaden.class)) {
-                        l.fertigOnlyOne(e);
+                SwingUtilities.invokeLater(() -> {
+                    for (ListenerFilmeLaden lst : listListeners) {
+                        lst.fertigOnlyOne(e);
                     }
                 });
             }
